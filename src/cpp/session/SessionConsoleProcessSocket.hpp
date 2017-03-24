@@ -18,6 +18,7 @@
 #include <string>
 
 #include <boost/function.hpp>
+#include <boost/scoped_ptr.hpp>
 
 #include <core/Error.hpp>
 #include <core/Thread.hpp>
