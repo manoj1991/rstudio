@@ -43,7 +43,6 @@
 #include <r/session/RSessionUtils.hpp>
 
 #include <boost/container/flat_set.hpp>
-#include <boost/timer/timer.hpp>
 #include <boost/bind.hpp>
 
 namespace rstudio {
@@ -1757,9 +1756,15 @@ bool skipFormulas(RTokenCursor& origin, ParseStatus& status)
       if (isLeftBracket(cursor))
          if (!cursor.fwdToMatchingToken())
             return false;
+      
+      // If the cursor is lying upon a right parenthesis, then implicitly
+      // pop that state (examine the parent state).
+      ParseStatus::ParseState state = cursor.isType(RToken::RPAREN)
+            ? status.peekState(1)
+            : status.peekState(0);
 
       // Check for end of statement
-      if (cursor.isAtEndOfStatement(status.isInParentheticalScope()))
+      if (cursor.isAtEndOfStatement(status.isInParentheticalScope(state)))
          break;
 
       // Expecting a symbol or right bracket
