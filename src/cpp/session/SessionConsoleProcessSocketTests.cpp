@@ -36,7 +36,6 @@ namespace {
 
 const std::string kCloseMessage = "CLOSE CONNECTION";
 
-// simple server hosting class
 class SocketHarness : public boost::enable_shared_from_this<SocketHarness>
 {
 public:
@@ -68,15 +67,15 @@ public:
    std::string receivedInput;
 };
 
-static easywsclient::WebSocket::pointer ws = NULL;
 
-void handle_message(const std::string & message)
+void handle_message(const std::string& message)
 {
     printf(">>> %s\n", message.c_str());
 //    if (message == "world") { ws->close(); }
 }
 
 // class for testing communication with the server
+using easywsclient::WebSocket;
 class SocketClient
 {
 public:
@@ -84,31 +83,48 @@ public:
       :
         handle_(handle),
         port_(port)
-   {}
+   {
+      std::string url("ws://localhost:" +
+                      boost::lexical_cast<std::string>(port_) + "/"); //terminal/" +
+//                      handle_);
+      ws_ = WebSocket::from_url(url);
+   }
 
    bool sendMessage(const std::string& msg)
    {
-      using easywsclient::WebSocket;
-
-      std::string url("ws://localhost:" + boost::lexical_cast<std::string>(port_) + "/foo");
-
-      ws = WebSocket::from_url(url);
-      if (!ws)
+      if (!ws_)
          return false;
-      ws->send(msg);
-      while (ws->getReadyState() != WebSocket::CLOSED) {
-        ws->poll();
-        ws->dispatch(handle_message);
-      }
+      ws_->poll(10);
+      ws_->send(msg);
+      ws_->poll(10);
+      return true;
+   }
 
-      delete ws;
-      ws = NULL;
+   void poll()
+   {
+      if (!ws_)
+         return;
+      while (ws_->getReadyState() != WebSocket::CLOSED)
+      {
+         ws_->poll();
+         ws_->dispatch(handle_message);
+      }
+   }
+
+   bool closeSocket()
+   {
+      if (!ws_)
+         return false;
+      ws_->close();
+      delete ws_;
+      ws_ = NULL;
       return true;
    }
 
 private:
    std::string handle_;
    int port_;
+   easywsclient::WebSocket::pointer ws_;
 };
 
 } // anonymous namespace
@@ -194,8 +210,18 @@ context("input output channel for interactive terminals")
       core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
       expect_true(!err);
 
-      //SocketClient client(handle1, pSocket->socket.port(handle1));
-      //expect_true(client.sendMessage("Hello World"));
+      const std::string message = "Hello World!";
+
+//      SocketClient client(handle1, pSocket->socket.port(handle1));
+//      expect_true(client.sendMessage(message));
+//      expect_true(client.sendMessage(kCloseMessage));
+//      client.poll();
+
+//      for (;;)
+//      {
+//         if (!pSocket->receivedInput.compare(message))
+//            break;
+//      }
 
       err = pSocket->socket.stopServer();
       expect_true(!err);

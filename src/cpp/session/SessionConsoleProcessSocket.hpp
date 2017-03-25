@@ -23,6 +23,10 @@
 #include <core/Error.hpp>
 #include <core/Thread.hpp>
 
+#include <websocketpp/config/asio_no_tls.hpp>
+#include <websocketpp/server.hpp>
+#include <websocketpp/frame.hpp>
+
 namespace rstudio {
 namespace session {
 namespace console_process {
@@ -32,6 +36,9 @@ struct ConsoleProcessSocketCallbacks
    // invoked when input arrives on the socket
    boost::function<void (const std::string& input)> onReceivedInput;
 };
+
+typedef websocketpp::server<websocketpp::config::asio> terminalServer;
+typedef terminalServer::message_ptr terminalMessage_ptr;
 
 // Manages a websocket that channels input and output from client for
 // interactive terminals. Terminals are identified via a unique handle.
@@ -66,16 +73,23 @@ public:
    // is the server monitoring for connections?
    bool serverRunning() const;
 
-protected:
-   struct Impl;
-   boost::scoped_ptr<Impl> pImpl_;
-
 private:
    void watchSocket();
+
+   void onMessage(terminalServer* s, websocketpp::connection_hdl hdl,
+                  terminalMessage_ptr msg);
+   void onClose(terminalServer* s, websocketpp::connection_hdl hdl);
+   void onOpen(terminalServer* s, websocketpp::connection_hdl hdl);
+   void onHttp(terminalServer* s, websocketpp::connection_hdl hdl);
 
 private:
    std::string handle_;
    ConsoleProcessSocketCallbacks callbacks_;
+
+   int port_;
+   boost::thread websocketThread_;
+   bool serverRunning_;
+   terminalServer wsServer_;
 };
 
 } // namespace console_process

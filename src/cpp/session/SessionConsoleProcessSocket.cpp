@@ -18,9 +18,6 @@
 #include <core/FilePath.hpp>
 #include <core/json/Json.hpp>
 
-#include <websocketpp/config/asio_no_tls.hpp>
-#include <websocketpp/server.hpp>
-#include <websocketpp/frame.hpp>
 
 namespace rstudio {
 namespace session {
@@ -28,59 +25,17 @@ namespace console_process {
 
 using namespace rstudio::core;
 
-typedef websocketpp::server<websocketpp::config::asio> server;
-typedef server::message_ptr message_ptr;
-
 namespace {
 
 bool s_didSeedRand = false;
 
 
-void onOpen(server* s, websocketpp::connection_hdl hdl)
-{
-}
-
-void onClose(server* s, websocketpp::connection_hdl hdl)
-{
-}
-
-void onHttp(server* s, websocketpp::connection_hdl hdl)
-{
-   server::connection_ptr con = s->get_con_from_hdl(hdl);
-
-   std::stringstream output;
-   output << "<html><body><pre>" << std::endl;
-   output << "Interesting diagnostics here.";
-   output << "</pre></body><html>" << std::endl;
-
-   con->set_status(websocketpp::http::status_code::ok);
-   con->set_body(output.str());
-}
-
-void onMessage(server* s, websocketpp::connection_hdl hdl, message_ptr msg)
-{
-}
-
 } // anonymous namespace
-
-struct ConsoleProcessSocket::Impl
-{
-   Impl()
-      :
-        port_(0),
-        serverRunning_(false)
-   {}
-
-
-   int port_;
-   boost::thread websocketThread_;
-   bool serverRunning_;
-   server wsServer_;
-};
 
 ConsoleProcessSocket::ConsoleProcessSocket()
    :
-     pImpl_(new Impl())
+     port_(0),
+     serverRunning_(false)
 {
 }
 
@@ -140,7 +95,7 @@ int ConsoleProcessSocket::port(const std::string& terminalHandle) const
 {
    if (!handle_.compare(terminalHandle))
    {
-      return pImpl_->port_;
+      return port_;
    }
    else
    {
@@ -152,13 +107,13 @@ Error ConsoleProcessSocket::stopServer()
 {
    try
    {
-      if (pImpl_->serverRunning_)
+      if (serverRunning_)
       {
          stopAll();
-         pImpl_->wsServer_.stop();
-         pImpl_->serverRunning_ = false;
-         pImpl_->port_ = 0;
-         pImpl_->websocketThread_.join();
+         wsServer_.stop();
+         serverRunning_ = false;
+         port_ = 0;
+         websocketThread_.join();
       }
    }
    catch (websocketpp::exception const& e)
@@ -179,7 +134,7 @@ Error ConsoleProcessSocket::stopServer()
 
 Error ConsoleProcessSocket::ensureServerRunning()
 {
-   if (pImpl_->serverRunning_)
+   if (serverRunning_)
       return Success();
 
    long port = 0;
@@ -197,17 +152,17 @@ Error ConsoleProcessSocket::ensureServerRunning()
 
    try
    {
-      pImpl_->wsServer_.set_access_channels(websocketpp::log::alevel::none);
-      pImpl_->wsServer_.init_asio();
+      wsServer_.set_access_channels(websocketpp::log::alevel::none);
+      wsServer_.init_asio();
 
-      pImpl_->wsServer_.set_message_handler(
-               boost::bind(&onMessage,&pImpl_->wsServer_, _1, _2));
-      pImpl_->wsServer_.set_http_handler(
-               boost::bind(&onHttp, &pImpl_->wsServer_, _1));
-      pImpl_->wsServer_.set_close_handler(
-               boost::bind(&onClose, &pImpl_->wsServer_, _1));
-      pImpl_->wsServer_.set_open_handler
-            (boost::bind(&onOpen, &pImpl_->wsServer_, _1));
+      wsServer_.set_message_handler(
+               boost::bind(&ConsoleProcessSocket::onMessage, this, &wsServer_, _1, _2));
+      wsServer_.set_http_handler(
+               boost::bind(&ConsoleProcessSocket::onHttp, this, &wsServer_, _1));
+      wsServer_.set_close_handler(
+               boost::bind(&ConsoleProcessSocket::onClose, this, &wsServer_, _1));
+      wsServer_.set_open_handler(
+               boost::bind(&ConsoleProcessSocket::onOpen, this, &wsServer_, _1));
 
       // try to bind to the given port
       do
@@ -219,15 +174,15 @@ Error ConsoleProcessSocket::ensureServerRunning()
                // listen will fail without ipv6 support on the machine so we
                // only use it for machines with a ipv6 stack
                // TODO (gary) need a cross-platform way to do this
-               pImpl_->wsServer_.listen(port);
+               wsServer_.listen(port);
             }
             else
             {
                // no ipv6 support, fall back to ipv4
-               pImpl_->wsServer_.listen(boost::asio::ip::tcp::v4(), port);
+               wsServer_.listen(boost::asio::ip::tcp::v4(), port);
             }
 
-            pImpl_->wsServer_.start_accept();
+            wsServer_.start_accept();
             break;
          }
          catch (websocketpp::exception const& e)
@@ -260,10 +215,10 @@ Error ConsoleProcessSocket::ensureServerRunning()
       // start server
       core::thread::safeLaunchThread(
                boost::bind(&ConsoleProcessSocket::watchSocket, this),
-               &pImpl_->websocketThread_);
+               &websocketThread_);
 
-      pImpl_->port_ = port;
-      pImpl_->serverRunning_ = true;
+      port_ = port;
+      serverRunning_ = true;
    }
    catch (websocketpp::exception const& e)
    {
@@ -282,13 +237,53 @@ Error ConsoleProcessSocket::ensureServerRunning()
 
 void ConsoleProcessSocket::watchSocket()
 {
-   pImpl_->wsServer_.run();
+   wsServer_.run();
 }
 
 bool ConsoleProcessSocket::serverRunning() const
 {
-   return pImpl_->serverRunning_;
+   return serverRunning_;
 }
+
+void ConsoleProcessSocket::onMessage(terminalServer* s,
+                                     websocketpp::connection_hdl hdl,
+                                     terminalMessage_ptr msg)
+{
+   std::string message = msg->get_payload();
+//   json::Value payload;
+//   json::parse(msg->get_payload(), &payload);
+//   if (payload.type() != json::ObjectType)
+//   {
+//      return;
+//   }
+
+   if (callbacks_.onReceivedInput)
+      callbacks_.onReceivedInput(message);
+}
+
+void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hdl hdl)
+{
+   LOG_ERROR_MESSAGE("onClose");
+}
+
+void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl hdl)
+{
+   LOG_ERROR_MESSAGE("onOpen");
+}
+
+void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl hdl)
+{
+   terminalServer::connection_ptr con = s->get_con_from_hdl(hdl);
+
+   std::stringstream output;
+   output << "<html><body><pre>" << std::endl;
+   output << "Interesting diagnostics here.";
+   output << "</pre></body><html>" << std::endl;
+
+   con->set_status(websocketpp::http::status_code::ok);
+   con->set_body(output.str());
+}
+
 
 } // namespace console_process
 } // namespace session
