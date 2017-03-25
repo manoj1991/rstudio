@@ -38,26 +38,14 @@ bool s_didSeedRand = false;
 
 void onOpen(server* s, websocketpp::connection_hdl hdl)
 {
-   if (s)
-   {
-      LOG_ERROR_MESSAGE("onOpen");
-   }
 }
 
 void onClose(server* s, websocketpp::connection_hdl hdl)
 {
-   if (s)
-   {
-      LOG_ERROR_MESSAGE("onClose");
-   }
 }
 
 void onHttp(server* s, websocketpp::connection_hdl hdl)
 {
-   if (s)
-   {
-      LOG_ERROR_MESSAGE("onHttp");
-   }
    server::connection_ptr con = s->get_con_from_hdl(hdl);
 
    std::stringstream output;
@@ -71,10 +59,6 @@ void onHttp(server* s, websocketpp::connection_hdl hdl)
 
 void onMessage(server* s, websocketpp::connection_hdl hdl, message_ptr msg)
 {
-   if (s)
-   {
-      LOG_ERROR_MESSAGE("onMessage");
-   }
 }
 
 } // anonymous namespace

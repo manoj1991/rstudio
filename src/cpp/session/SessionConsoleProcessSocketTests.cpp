@@ -19,6 +19,10 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/enable_shared_from_this.hpp>
+#include <boost/lexical_cast.hpp>
+
+#include <easywsclient/easywsclient.hpp>
+#include <easywsclient/easywsclient.cpp>
 
 #include <tests/TestThat.hpp>
 
@@ -30,8 +34,12 @@ using namespace console_process;
 
 namespace {
 
-struct SocketHarness : public boost::enable_shared_from_this<SocketHarness>
+const std::string kCloseMessage = "CLOSE CONNECTION";
+
+// simple server hosting class
+class SocketHarness : public boost::enable_shared_from_this<SocketHarness>
 {
+public:
    ~SocketHarness()
    {
       socket.stopServer();
@@ -39,6 +47,11 @@ struct SocketHarness : public boost::enable_shared_from_this<SocketHarness>
 
    void onReceivedInput(const std::string& input)
    {
+      if (!input.compare(kCloseMessage))
+      {
+         // close the socket
+         return;
+      }
       receivedInput.append(input);
    }
 
@@ -53,6 +66,49 @@ struct SocketHarness : public boost::enable_shared_from_this<SocketHarness>
 
    ConsoleProcessSocket socket;
    std::string receivedInput;
+};
+
+static easywsclient::WebSocket::pointer ws = NULL;
+
+void handle_message(const std::string & message)
+{
+    printf(">>> %s\n", message.c_str());
+//    if (message == "world") { ws->close(); }
+}
+
+// class for testing communication with the server
+class SocketClient
+{
+public:
+   SocketClient(const std::string& handle, int port)
+      :
+        handle_(handle),
+        port_(port)
+   {}
+
+   bool sendMessage(const std::string& msg)
+   {
+      using easywsclient::WebSocket;
+
+      std::string url("ws://localhost:" + boost::lexical_cast<std::string>(port_) + "/foo");
+
+      ws = WebSocket::from_url(url);
+      if (!ws)
+         return false;
+      ws->send(msg);
+      while (ws->getReadyState() != WebSocket::CLOSED) {
+        ws->poll();
+        ws->dispatch(handle_message);
+      }
+
+      delete ws;
+      ws = NULL;
+      return true;
+   }
+
+private:
+   std::string handle_;
+   int port_;
 };
 
 } // anonymous namespace
@@ -130,6 +186,19 @@ context("input output channel for interactive terminals")
       err = pSocket->socket.stopServer();
       expect_true(!err);
       expect_false(pSocket->socket.serverRunning());
+   }
+
+   test_that("can connect to server and send a message")
+   {
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
+      expect_true(!err);
+
+      //SocketClient client(handle1, pSocket->socket.port(handle1));
+      //expect_true(client.sendMessage("Hello World"));
+
+      err = pSocket->socket.stopServer();
+      expect_true(!err);
    }
 }
 
