@@ -55,6 +55,10 @@ public:
    // stop listening to given terminal handle
    core::Error stop(const std::string& terminalHandle);
 
+   // send text to client
+   core::Error sendText(const std::string& terminalHandle,
+                        const std::string& message);
+
    // stop listening to all terminals
    core::Error stopAll();
 
@@ -69,9 +73,6 @@ public:
 
    // start the websocket servicing thread, if not running
    core::Error ensureServerRunning();
-
-   // is the server monitoring for connections?
-   bool serverRunning() const;
 
 private:
    void watchSocket();
@@ -90,6 +91,7 @@ private:
    boost::thread websocketThread_;
    bool serverRunning_;
    terminalServer wsServer_;
+   websocketpp::connection_hdl hdl_;
 };
 
 } // namespace console_process

@@ -73,7 +73,31 @@ Error ConsoleProcessSocket::stop(const std::string& terminalHandle)
                          terminalHandle,
                          ERROR_LOCATION);
    }
-   return stopAll();
+
+   handle_.clear();
+   return Success();
+}
+
+Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
+                                     const std::string& message)
+{
+   // make sure this handle still refers to a connection before we try to
+   // send data over it
+   websocketpp::lib::error_code ec;
+   wsServer_.get_con_from_hdl(hdl_, ec);
+   if (ec.value() > 0)
+   {
+      return systemError(boost::system::errc::not_connected,
+                         ec.message(), ERROR_LOCATION);
+   }
+
+   wsServer_.send(hdl_, message, websocketpp::frame::opcode::text, ec);
+   if (ec)
+   {
+      return systemError(boost::system::errc::bad_message,
+                         ec.message(), ERROR_LOCATION);
+   }
+   return Success();
 }
 
 Error ConsoleProcessSocket::stopAll()
@@ -240,11 +264,6 @@ void ConsoleProcessSocket::watchSocket()
    wsServer_.run();
 }
 
-bool ConsoleProcessSocket::serverRunning() const
-{
-   return serverRunning_;
-}
-
 void ConsoleProcessSocket::onMessage(terminalServer* s,
                                      websocketpp::connection_hdl hdl,
                                      terminalMessage_ptr msg)
@@ -263,12 +282,12 @@ void ConsoleProcessSocket::onMessage(terminalServer* s,
 
 void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hdl hdl)
 {
-   LOG_ERROR_MESSAGE("onClose");
+   // TODO (gary)
 }
 
 void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl hdl)
 {
-   LOG_ERROR_MESSAGE("onOpen");
+   hdl_ = hdl;
 }
 
 void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl hdl)
@@ -283,7 +302,6 @@ void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl
    con->set_status(websocketpp::http::status_code::ok);
    con->set_body(output.str());
 }
-
 
 } // namespace console_process
 } // namespace session
