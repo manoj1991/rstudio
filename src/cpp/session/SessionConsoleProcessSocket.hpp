@@ -35,6 +35,9 @@ struct ConsoleProcessSocketCallbacks
 {
    // invoked when input arrives on the socket
    boost::function<void (const std::string& input)> onReceivedInput;
+
+   // invoked when socket closes
+   boost::function<void ()> onClosed;
 };
 
 typedef websocketpp::server<websocketpp::config::asio> terminalServer;

@@ -56,12 +56,19 @@ public:
       receivedInput.append(input);
    }
 
+   void onClosed()
+   {
+      LOG_ERROR_MESSAGE("onClosed");
+   }
+
    ConsoleProcessSocketCallbacks createSocketCallbacks()
    {
       using boost::bind;
       ConsoleProcessSocketCallbacks cb;
       cb.onReceivedInput = bind(&SocketHarness::onReceivedInput,
                                 SocketHarness::shared_from_this(), _1);
+      cb.onClosed = bind(&SocketHarness::onClosed,
+                         SocketHarness::shared_from_this());
       return cb;
    }
 

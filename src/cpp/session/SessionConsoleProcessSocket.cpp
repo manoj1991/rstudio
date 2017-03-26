@@ -282,7 +282,8 @@ void ConsoleProcessSocket::onMessage(terminalServer* s,
 
 void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hdl hdl)
 {
-   // TODO (gary)
+   if (callbacks_.onClosed)
+      callbacks_.onClosed();
 }
 
 void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl hdl)
