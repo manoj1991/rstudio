@@ -33,11 +33,20 @@ namespace console_process {
 
 struct ConsoleProcessSocketCallbacks
 {
+   // invoked when socket closes
+   boost::function<void ()> onSocketClosed;
+};
+
+struct ConsoleProcessSocketConnectionCallbacks
+{
    // invoked when input arrives on the socket
    boost::function<void (const std::string& input)> onReceivedInput;
 
-   // invoked when socket closes
-   boost::function<void ()> onClosed;
+   // invoked when connection opens
+   boost::function<void()> onConnectionOpened;
+
+   // invoked when connection closes
+   boost::function<void ()> onConnectionClosed;
 };
 
 typedef websocketpp::server<websocketpp::config::asio> terminalServer;
@@ -51,15 +60,15 @@ public:
    ConsoleProcessSocket();
    ~ConsoleProcessSocket();
 
-   // start the websocket servicing thread, if not running
-   core::Error ensureServerRunning();
+   // start the websocket servicing thread
+   core::Error ensureServerRunning(const ConsoleProcessSocketCallbacks& callbacks);
 
    // stop the websocket servicing thread, if running
    core::Error stopServer();
 
-   // start listening for requests for given terminal handle
+   // start receiving callbacks for given connection
    core::Error listen(const std::string& terminalHandle,
-                      const ConsoleProcessSocketCallbacks& callbacks);
+                      const ConsoleProcessSocketConnectionCallbacks& callbacks);
 
    // stop listening to given terminal handle
    core::Error stop(const std::string& terminalHandle);
@@ -89,6 +98,7 @@ private:
 private:
    std::string handle_;
    ConsoleProcessSocketCallbacks callbacks_;
+   ConsoleProcessSocketConnectionCallbacks connectionCallbacks_;
 
    int port_;
    boost::thread websocketThread_;

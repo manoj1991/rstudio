@@ -162,9 +162,10 @@ private:
    void maybeConsolePrompt(core::system::ProcessOperations& ops,
                            const std::string& output);
 
-   ConsoleProcessSocketCallbacks createWebsocketCallbacks();
+   ConsoleProcessSocketConnectionCallbacks createConsoleProcessSocketConnectionCallbacks();
    void onReceivedInput(const std::string& input);
-   void onClosed();
+   void onConnectionOpened();
+   void onConnectionClosed();
 
 private:
    // Command and options that will be used when start() is called

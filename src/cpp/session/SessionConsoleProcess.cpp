@@ -34,10 +34,23 @@ namespace session {
 namespace console_process {
 
 namespace {
-   typedef std::map<std::string, boost::shared_ptr<ConsoleProcess> > ProcTable;
-   ProcTable s_procs;
 
-   console_process::ConsoleProcessSocket s_terminalSocket;
+typedef std::map<std::string, boost::shared_ptr<ConsoleProcess> > ProcTable;
+ProcTable s_procs;
+ConsoleProcessSocket s_terminalSocket;
+
+// called when the terminal websocket closes
+void onSocketClosed()
+{
+   // TODO (gary) tell all ConsoleProcessInfo's that their socket is gone
+}
+
+ConsoleProcessSocketCallbacks createSocketCallbacks()
+{
+   ConsoleProcessSocketCallbacks cb;
+   cb.onSocketClosed = boost::bind(&onSocketClosed);
+   return cb;
+}
 
 } // anonymous namespace
 
@@ -391,6 +404,13 @@ void ConsoleProcess::onStdout(core::system::ProcessOperations& ops,
 {
    if (options_.smartTerminal)
    {
+      if (procInfo_->getChannelMode() == Websocket)
+      {
+         s_terminalSocket.sendText(procInfo_->getHandle(), output);
+         return;
+      }
+
+      // Rpc
       enqueOutputEvent(output);
       return;
    }
@@ -770,7 +790,7 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
       boost::shared_ptr<ConsoleProcessInfo> procInfo)
 {
    // using websockets or RPC?
-   Error error = s_terminalSocket.ensureServerRunning();
+   Error error = s_terminalSocket.ensureServerRunning(createSocketCallbacks());
    if (error || s_terminalSocket.port() == 0)
    {
       procInfo->setChannelMode(Rpc, "");
@@ -808,25 +828,37 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
    }
    
    // otherwise create a new one
-   return create(command, options, procInfo);
+   boost::shared_ptr<ConsoleProcess> cp =  create(command, options, procInfo);
+   if (cp->procInfo_->getChannelMode() == Websocket)
+   {
+      s_terminalSocket.listen(cp->procInfo_->getHandle(),
+                              cp->createConsoleProcessSocketConnectionCallbacks());
+   }
+   return cp;
 }
 
-ConsoleProcessSocketCallbacks ConsoleProcess::createWebsocketCallbacks()
+ConsoleProcessSocketConnectionCallbacks ConsoleProcess::createConsoleProcessSocketConnectionCallbacks()
 {
-   ConsoleProcessSocketCallbacks cb;
+   ConsoleProcessSocketConnectionCallbacks cb;
    cb.onReceivedInput = boost::bind(&ConsoleProcess::onReceivedInput, ConsoleProcess::shared_from_this(), _1);
-   cb.onClosed = boost::bind(&ConsoleProcess::onClosed, ConsoleProcess::shared_from_this());
+   cb.onConnectionOpened = boost::bind(&ConsoleProcess::onConnectionOpened, ConsoleProcess::shared_from_this());
+   cb.onConnectionClosed = boost::bind(&ConsoleProcess::onConnectionClosed, ConsoleProcess::shared_from_this());
    return cb;
 }
 
+// received input from websocket (e.g. user typing on client)
 void ConsoleProcess::onReceivedInput(const std::string& input)
+{
+   enqueInput(Input(input));
+}
+
+void ConsoleProcess::onConnectionClosed()
 {
 
 }
 
-void ConsoleProcess::onClosed()
+void ConsoleProcess::onConnectionOpened()
 {
-
 }
 
 void PasswordManager::attach(

@@ -51,8 +51,11 @@ ConsoleProcessSocket::~ConsoleProcessSocket()
    }
 }
 
-Error ConsoleProcessSocket::ensureServerRunning()
+Error ConsoleProcessSocket::ensureServerRunning(
+      const ConsoleProcessSocketCallbacks& callbacks)
 {
+   callbacks_ = callbacks;
+
    if (serverRunning_)
       return Success();
 
@@ -185,7 +188,7 @@ Error ConsoleProcessSocket::stopServer()
 
 Error ConsoleProcessSocket::listen(
       const std::string& terminalHandle,
-      const ConsoleProcessSocketCallbacks& callbacks)
+      const ConsoleProcessSocketConnectionCallbacks& callbacks)
 {
    if (!serverRunning_)
    {
@@ -195,7 +198,7 @@ Error ConsoleProcessSocket::listen(
    }
 
    handle_ = terminalHandle;
-   callbacks_ = callbacks;
+   connectionCallbacks_ = callbacks;
 
    return Success();
 }
@@ -272,19 +275,24 @@ void ConsoleProcessSocket::onMessage(terminalServer* s,
 //      return;
 //   }
 
-   if (callbacks_.onReceivedInput)
-      callbacks_.onReceivedInput(message);
+   if (connectionCallbacks_.onReceivedInput)
+      connectionCallbacks_.onReceivedInput(message);
+
+   // TODO (gary) -- temporary, echo received text right back over websocket
+   //sendText(handle_, message);
 }
 
 void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hdl hdl)
 {
-   if (callbacks_.onClosed)
-      callbacks_.onClosed();
+   if (connectionCallbacks_.onConnectionClosed)
+      connectionCallbacks_.onConnectionClosed();
 }
 
 void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl hdl)
 {
    hdl_ = hdl;
+   if (connectionCallbacks_.onConnectionOpened)
+      connectionCallbacks_.onConnectionOpened();
 }
 
 void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl hdl)

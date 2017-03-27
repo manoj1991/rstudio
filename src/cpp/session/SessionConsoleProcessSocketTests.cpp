@@ -13,6 +13,7 @@
  *
  */
 
+
 #include <session/SessionConsoleProcessSocket.hpp>
 
 #include <boost/bind.hpp>
@@ -24,8 +25,8 @@
 #include <easywsclient/easywsclient.hpp>
 #include <easywsclient/easywsclient.cpp>
 
-//#include <websocketpp/config/asio_no_tls_client.hpp>
-//#include <websocketpp/client.hpp>
+#include <websocketpp/config/asio_no_tls_client.hpp>
+#include <websocketpp/client.hpp>
 
 #include <tests/TestThat.hpp>
 
@@ -39,16 +40,64 @@ namespace {
 
 const std::string kCloseMessage = "CLOSE CONNECTION";
 
+// convenience wrapper for testing ConsoleProcessSocket
+class SocketHarness : public boost::enable_shared_from_this<SocketHarness>
+{
+public:
+   ConsoleProcessSocketCallbacks createSocketCallbacks()
+   {
+      using boost::bind;
+      ConsoleProcessSocketCallbacks cb;
+      cb.onSocketClosed = bind(&SocketHarness::onSocketClosed,
+                         SocketHarness::shared_from_this());
+      return cb;
+   }
+
+   SocketHarness()
+   {
+   }
+
+   ~SocketHarness()
+   {
+      socket.stopServer();
+   }
+
+   core::Error ensureServerRunning()
+   {
+      return socket.ensureServerRunning(createSocketCallbacks());
+   }
+
+   void onSocketClosed()
+   {
+      LOG_ERROR_MESSAGE("onClosed");
+   }
+
+   void onReceivedInput(const std::string& input)
+   {
+      if (!input.compare(kCloseMessage))
+      {
+         socket.stop("abcd");
+         socket.sendText("abcd", kCloseMessage);
+         return;
+      }
+      receivedInput.append(input);
+   }
+
+   ConsoleProcessSocket socket;
+   std::string receivedInput;
+};
+
 //typedef websocketpp::client<websocketpp::config::asio_client> client;
-//
+//client s_client;
+
 //// class for testing communication with the server
 //class SocketClientAsio
 //{
 //public:
-//   SocketClientAsio(const std::string& handle, int port)
+//   SocketClientAsio(const std::string& handle, boost::shared_ptr<SocketHarness> pServerSocket)
 //      :
 //        handle_(handle),
-//        port_(port)
+//        pServerSocket_(pServerSocket)
 //   {}
 
 //   bool connectDisconnectSocket()
@@ -66,72 +115,61 @@ const std::string kCloseMessage = "CLOSE CONNECTION";
 
 //private:
 //   std::string handle_;
-//   int port_;
 //   client endpoint;
+//   boost::shared_ptr<SocketHarness> pServerSocket_;
 //};
 
-// convenience wrapper for testing ConsoleProcessSocket
-class SocketHarness : public boost::enable_shared_from_this<SocketHarness>
-{
-public:
-   SocketHarness(bool autoStart)
-   {
-      if (autoStart)
-      {
-         socket.ensureServerRunning();
-      }
-   }
-
-   ~SocketHarness()
-   {
-      socket.stopServer();
-   }
-
-   void onReceivedInput(const std::string& input)
-   {
-      if (!input.compare(kCloseMessage))
-      {
-         socket.stop("abcd");
-         socket.sendText("abcd", kCloseMessage);
-         return;
-      }
-      receivedInput.append(input);
-   }
-
-   void onClosed()
-   {
-      LOG_ERROR_MESSAGE("onClosed");
-   }
-
-   ConsoleProcessSocketCallbacks createSocketCallbacks()
-   {
-      using boost::bind;
-      ConsoleProcessSocketCallbacks cb;
-      cb.onReceivedInput = bind(&SocketHarness::onReceivedInput,
-                                SocketHarness::shared_from_this(), _1);
-      cb.onClosed = bind(&SocketHarness::onClosed,
-                         SocketHarness::shared_from_this());
-      return cb;
-   }
-
-   ConsoleProcessSocket socket;
-   std::string receivedInput;
-};
 
 // class for testing communication with the server
 using easywsclient::WebSocket;
 class SocketClient
 {
 public:
-   SocketClient(const std::string& handle, int port)
+   SocketClient(const std::string& handle, boost::shared_ptr<SocketHarness> pServerSocket)
       :
         handle_(handle),
-        port_(port)
+        pServerSocket_(pServerSocket),
+        gotOpened_(false),
+        gotClosed_(false)
    {
       std::string url("ws://localhost:" +
-                      boost::lexical_cast<std::string>(port_) + "/terminal/" +
+                      boost::lexical_cast<std::string>(pServerSocket_->socket.port()) + "/terminal/" +
                       handle_ + "/");
       ws_ = WebSocket::from_url(url);
+   }
+
+   void onReceivedInput(const std::string& input)
+   {
+      input_.append(input);
+   }
+
+   void onConnectionOpened()
+   {
+      gotOpened_ = true;
+   }
+
+   void onConnectionClosed()
+   {
+      gotClosed_ = true;
+   }
+
+   ConsoleProcessSocketConnectionCallbacks createConsoleProcessSocketConnectionCallbacks()
+   {
+      ConsoleProcessSocketConnectionCallbacks cb;
+      cb.onReceivedInput = boost::bind(&SocketClient::onReceivedInput, this, _1);
+      cb.onConnectionOpened = boost::bind(&SocketClient::onConnectionOpened, this);
+      cb.onConnectionClosed = boost::bind(&SocketClient::onConnectionClosed, this);
+      return cb;
+   }
+
+   core::Error listen()
+   {
+      return pServerSocket_->socket.listen(handle_, createConsoleProcessSocketConnectionCallbacks());
+   }
+
+   core::Error stop()
+   {
+      return pServerSocket_->socket.stop(handle_);
    }
 
    bool sendMessage(const std::string& msg)
@@ -173,10 +211,17 @@ public:
       return true;
    }
 
+   std::string getInput() { return input_; }
+   bool gotOpened() { return gotOpened_; }
+   bool gotClosed() { return gotClosed_; }
+
 private:
    std::string handle_;
-   int port_;
    easywsclient::WebSocket::pointer ws_;
+   boost::shared_ptr<SocketHarness> pServerSocket_;
+   std::string input_;
+   bool gotOpened_;
+   bool gotClosed_;
 };
 
 } // anonymous namespace
@@ -187,27 +232,28 @@ context("input output channel for interactive terminals")
 
    test_that("new socket object has zero connections count")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(false);
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
       expect_true(pSocket->socket.connectionCount() == 0);
    }
 
    test_that("new socket object has zero port")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(false);
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
       expect_true(pSocket->socket.port() == 0);
    }
 
    test_that("cannot listen if server is not running")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(false);
-      core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      SocketClient client(handle1, pSocket);
+      core::Error err = client.listen();
       expect_true(err);
    }
 
    test_that("can start and stop the socket server")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(false);
-      core::Error err = pSocket->socket.ensureServerRunning();
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      core::Error err = pSocket->ensureServerRunning();
       expect_false(err);
 
       err = pSocket->socket.stopServer();
@@ -216,8 +262,8 @@ context("input output channel for interactive terminals")
 
    test_that("server port returned correctly when started and stopped")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(false);
-      pSocket->socket.ensureServerRunning();
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      pSocket->ensureServerRunning();
       expect_true(pSocket->socket.port() > 0);
       pSocket->socket.stopServer();
       expect_true(pSocket->socket.port() == 0);
@@ -225,17 +271,23 @@ context("input output channel for interactive terminals")
 
    test_that("stop listening to unknown handle returns error")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(true);
-      core::Error err = pSocket->socket.stop(handle1);
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      core::Error err = pSocket->ensureServerRunning();
+      expect_false(err);
+      SocketClient client(handle1, pSocket);
+      err = client.stop();
       expect_false(!err);
    }
 
    test_that("can start and stop listening to a handle")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(true);
-      core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      core::Error err = pSocket->ensureServerRunning();
+      expect_false(err);
+      SocketClient client(handle1, pSocket);
+      err = client.listen();
       expect_true(!err);
-      err = pSocket->socket.stop(handle1);
+      err = client.stop();
       expect_true(!err);
 
       err = pSocket->socket.stopServer();
@@ -244,10 +296,13 @@ context("input output channel for interactive terminals")
 
    test_that("can start and stop listening to all handles")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(true);
-      core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      core::Error err = pSocket->ensureServerRunning();
+      expect_false(err);
+      SocketClient client(handle1, pSocket);
+      err = client.listen();
       expect_true(!err);
-      err = pSocket->socket.stopAll();
+      err = client.stop();
       expect_true(!err);
 
       err = pSocket->socket.stopServer();
@@ -256,13 +311,15 @@ context("input output channel for interactive terminals")
 
    test_that("can connect to server and send a message")
    {
-      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>(true);
-      core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
+      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
+      core::Error err = pSocket->ensureServerRunning();
+      expect_false(err);
+      SocketClient client(handle1, pSocket);
+      err = client.listen();
       expect_true(!err);
 
       const std::string message = "Hello World!";
 
-      SocketClient client(handle1, pSocket->socket.port());
       expect_true(client.sendMessage(message));
       expect_true(client.sendMessage(kCloseMessage));
       client.poll();
@@ -273,6 +330,8 @@ context("input output channel for interactive terminals")
             break;
       }
 
+      err = client.stop();
+      expect_true(!err);
       err = pSocket->socket.stopServer();
       expect_true(!err);
    }
@@ -280,12 +339,9 @@ context("input output channel for interactive terminals")
 //   test_that("can use socketclientasio")
 //   {
 //      boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
-//      core::Error err = pSocket->socket.listen(handle1, pSocket->createSocketCallbacks());
-//      expect_true(!err);
-
-//      const std::string message = "Hello World!";
-
-//      SocketClientAsio socket(handle1, pSocket->socket.port());
+//      core::Error err = pSocket->ensureServerRunning();
+//      expect_false(err);
+//      SocketClientAsio socket(handle1, pSocket);
 
 //      err = pSocket->socket.stopServer();
 //      expect_true(!err);

@@ -22,8 +22,8 @@ import org.rstudio.core.client.Stopwatch;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.common.console.ConsoleOutputEvent;
 import org.rstudio.studio.client.common.console.ConsoleProcess;
+import org.rstudio.studio.client.common.console.ConsoleProcessInfo;
 import org.rstudio.studio.client.common.shell.ShellInput;
-import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.terminal.events.TerminalDataInputEvent;
@@ -31,11 +31,12 @@ import org.rstudio.studio.client.workbench.views.terminal.xterm.XTermWidget;
 
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.inject.Inject;
+import com.sksamuel.gwt.websockets.CloseEvent;
+import com.sksamuel.gwt.websockets.Websocket;
+import com.sksamuel.gwt.websockets.WebsocketListener;
 
 /**
  * Manages input and output for the terminal session.
- * TODO Use a websocket to communicate with the server, falling back to RPC 
- * if unable to establish a websocket connection.
  */
 public class TerminalSessionSocket
    implements ConsoleOutputEvent.Handler, 
@@ -56,7 +57,12 @@ public class TerminalSessionSocket
       void receivedOutput(String output);
    }
    
-  
+   public interface ConnectCallback
+   {
+      void onConnected();
+      void onError(String message);
+   }
+   
    // Monitor and report input/display lag to console
    class InputEchoTimeMonitor
    {
@@ -162,24 +168,61 @@ public class TerminalSessionSocket
     * an rsession has already been started via RPC and the consoleProcess
     * received.
     * @param consoleProcess 
-    * @param callback returns true if using websockets, false for RPC
+    * @param callback result of connect attempt
     */
    public void connect(ConsoleProcess consoleProcess, 
-                       ServerRequestCallback<Boolean> callback)
+                       final ConnectCallback callback)
    {
       consoleProcess_ = consoleProcess;
-      
+
       // We keep this handler connected after a disconnect so
       // user input sent via RPC can wake up a suspended session
       if (terminalInputHandler_ == null)
          terminalInputHandler_ = xterm_.addTerminalDataInputHandler(this);
 
       addHandlerRegistration(consoleProcess_.addConsoleOutputHandler(this));
-      
-      // TODO (gary) attempt websocket connection here
-      boolean haveWebsocket = false;
-      
-      callback.onResponseReceived(haveWebsocket);
+
+      switch (consoleProcess_.getProcessInfo().getChannelMode())
+      {
+      case ConsoleProcessInfo.CHANNEL_RPC:
+         callback.onConnected();
+         break;
+         
+      case ConsoleProcessInfo.CHANNEL_WEBSOCKET:
+         String url = "ws://localhost:8787/p/" + 
+//         String url = "ws://localhost:" +
+               consoleProcess_.getProcessInfo().getChannelId() + "/terminal." +
+               consoleProcess_.getProcessInfo().getHandle() + "/";
+         socket_ = new Websocket(url);
+         socket_.addListener(new WebsocketListener() {
+
+            @Override
+            public void onClose(CloseEvent event)
+            {
+               // TODO (gary)
+            }
+
+            @Override
+            public void onMessage(String msg)
+            {
+               onConsoleOutput(new ConsoleOutputEvent(msg));
+            }
+
+            @Override
+            public void onOpen()
+            {
+               callback.onConnected();
+            }
+         });
+         
+         socket_.open();
+         break;
+         
+      case ConsoleProcessInfo.CHANNEL_PIPE:
+      default:
+         callback.onError("Channel type not implemented");
+         break;
+      }
    }
    
    /**
@@ -192,11 +235,22 @@ public class TerminalSessionSocket
                              String input,
                              VoidServerRequestCallback requestCallback)
    {
-      // TODO (gary) write to websocket here
+      switch (consoleProcess_.getProcessInfo().getChannelMode())
+      {
+      case ConsoleProcessInfo.CHANNEL_RPC:
+         consoleProcess_.writeStandardInput(
+               ShellInput.create(inputSequence, input,  true /*echo input*/), 
+               requestCallback);
+         break;
+      case ConsoleProcessInfo.CHANNEL_WEBSOCKET:
+         socket_.send(input);
+         requestCallback.onResponseReceived(null);
+         break;
+      case ConsoleProcessInfo.CHANNEL_PIPE:
+      default:
+         break;
+      }
       
-      consoleProcess_.writeStandardInput(
-            ShellInput.create(inputSequence, input,  true /*echo input*/), 
-            requestCallback);
    }
    
    /**
@@ -252,6 +306,7 @@ public class TerminalSessionSocket
    private HandlerRegistration terminalInputHandler_;
    private boolean reportTypingLag_;
    private InputEchoTimeMonitor inputEchoTiming_;
+   private Websocket socket_;
    
    // Injected ---- 
    private UIPrefs uiPrefs_;
