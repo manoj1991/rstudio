@@ -26,6 +26,8 @@
 
 #include <core/system/Process.hpp>
 
+#include <session/SessionConsoleProcessSocket.hpp>
+
 namespace rstudio {
 namespace core {
    class Error;
@@ -159,6 +161,10 @@ private:
                             const std::string& prompt);
    void maybeConsolePrompt(core::system::ProcessOperations& ops,
                            const std::string& output);
+
+   ConsoleProcessSocketCallbacks createWebsocketCallbacks();
+   void onReceivedInput(const std::string& input);
+   void onClosed();
 
 private:
    // Command and options that will be used when start() is called

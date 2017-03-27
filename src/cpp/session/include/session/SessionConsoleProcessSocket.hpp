@@ -51,6 +51,12 @@ public:
    ConsoleProcessSocket();
    ~ConsoleProcessSocket();
 
+   // start the websocket servicing thread, if not running
+   core::Error ensureServerRunning();
+
+   // stop the websocket servicing thread, if running
+   core::Error stopServer();
+
    // start listening for requests for given terminal handle
    core::Error listen(const std::string& terminalHandle,
                       const ConsoleProcessSocketCallbacks& callbacks);
@@ -66,16 +72,10 @@ public:
    core::Error stopAll();
 
    // number of terminals being monitored
-   int count() const;
+   int connectionCount() const;
 
-   // network port for given terminal handle
-   int port(const std::string& terminalHandle) const;
-
-   // stop the websocket servicing thread, if running
-   core::Error stopServer();
-
-   // start the websocket servicing thread, if not running
-   core::Error ensureServerRunning();
+   // network port for websocket listener; 0 means no port
+   int port() const;
 
 private:
    void watchSocket();

@@ -36,6 +36,9 @@ namespace console_process {
 namespace {
    typedef std::map<std::string, boost::shared_ptr<ConsoleProcess> > ProcTable;
    ProcTable s_procs;
+
+   console_process::ConsoleProcessSocket s_terminalSocket;
+
 } // anonymous namespace
 
 void saveConsoleProcesses();
@@ -766,6 +769,20 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
       core::system::ProcessOptions options,
       boost::shared_ptr<ConsoleProcessInfo> procInfo)
 {
+   // using websockets or RPC?
+   Error error = s_terminalSocket.ensureServerRunning();
+   if (error || s_terminalSocket.port() == 0)
+   {
+      procInfo->setChannelMode(Rpc, "");
+      if (error)
+         LOG_ERROR(error);
+   }
+   else
+   {
+      std::string port = boost::lexical_cast<std::string>(s_terminalSocket.port());
+      procInfo->setChannelMode(Websocket, port);
+   }
+
    std::string command;
    if (procInfo->getAllowRestart() && !procInfo->getHandle().empty())
    {
@@ -792,6 +809,24 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
    
    // otherwise create a new one
    return create(command, options, procInfo);
+}
+
+ConsoleProcessSocketCallbacks ConsoleProcess::createWebsocketCallbacks()
+{
+   ConsoleProcessSocketCallbacks cb;
+   cb.onReceivedInput = boost::bind(&ConsoleProcess::onReceivedInput, ConsoleProcess::shared_from_this(), _1);
+   cb.onClosed = boost::bind(&ConsoleProcess::onClosed, ConsoleProcess::shared_from_this());
+   return cb;
+}
+
+void ConsoleProcess::onReceivedInput(const std::string& input)
+{
+
+}
+
+void ConsoleProcess::onClosed()
+{
+
 }
 
 void PasswordManager::attach(

@@ -13,7 +13,7 @@
  *
  */
 
-#include "SessionConsoleProcessSocket.hpp"
+#include <session/SessionConsoleProcessSocket.hpp>
 
 #include <core/FilePath.hpp>
 #include <core/json/Json.hpp>
@@ -49,111 +49,6 @@ ConsoleProcessSocket::~ConsoleProcessSocket()
    catch (...)
    {
    }
-}
-
-Error ConsoleProcessSocket::listen(
-      const std::string& terminalHandle,
-      const ConsoleProcessSocketCallbacks& callbacks)
-{
-   Error error = ensureServerRunning();
-   if (error)
-      return error;
-
-   handle_ = terminalHandle;
-   callbacks_ = callbacks;
-
-   return error;
-}
-
-Error ConsoleProcessSocket::stop(const std::string& terminalHandle)
-{
-   if (handle_.compare(terminalHandle))
-   {
-      return systemError(boost::system::errc::invalid_argument,
-                         terminalHandle,
-                         ERROR_LOCATION);
-   }
-
-   handle_.clear();
-   return Success();
-}
-
-Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
-                                     const std::string& message)
-{
-   // make sure this handle still refers to a connection before we try to
-   // send data over it
-   websocketpp::lib::error_code ec;
-   wsServer_.get_con_from_hdl(hdl_, ec);
-   if (ec.value() > 0)
-   {
-      return systemError(boost::system::errc::not_connected,
-                         ec.message(), ERROR_LOCATION);
-   }
-
-   wsServer_.send(hdl_, message, websocketpp::frame::opcode::text, ec);
-   if (ec)
-   {
-      return systemError(boost::system::errc::bad_message,
-                         ec.message(), ERROR_LOCATION);
-   }
-   return Success();
-}
-
-Error ConsoleProcessSocket::stopAll()
-{
-   Error err;
-   handle_.clear();
-   return err;
-}
-
-int ConsoleProcessSocket::count() const
-{
-   if (handle_.empty())
-      return 0;
-   else
-      return 1;
-}
-
-int ConsoleProcessSocket::port(const std::string& terminalHandle) const
-{
-   if (!handle_.compare(terminalHandle))
-   {
-      return port_;
-   }
-   else
-   {
-      return 0;
-   }
-}
-
-Error ConsoleProcessSocket::stopServer()
-{
-   try
-   {
-      if (serverRunning_)
-      {
-         stopAll();
-         wsServer_.stop();
-         serverRunning_ = false;
-         port_ = 0;
-         websocketThread_.join();
-      }
-   }
-   catch (websocketpp::exception const& e)
-   {
-      LOG_ERROR_MESSAGE(e.what());
-      return systemError(boost::system::errc::invalid_argument,
-                         e.what(),
-                         ERROR_LOCATION);
-   }
-   catch (...)
-   {
-      LOG_ERROR_MESSAGE("Unknown exception stopping terminal websocket server");
-      return systemError(boost::system::errc::invalid_argument,
-                         "Unknown exception", ERROR_LOCATION);
-   }
-   return Success();
 }
 
 Error ConsoleProcessSocket::ensureServerRunning()
@@ -257,6 +152,107 @@ Error ConsoleProcessSocket::ensureServerRunning()
                          "Unknown exception", ERROR_LOCATION);
    }
    return Success();
+}
+
+Error ConsoleProcessSocket::stopServer()
+{
+   try
+   {
+      if (serverRunning_)
+      {
+         stopAll();
+         wsServer_.stop();
+         serverRunning_ = false;
+         port_ = 0;
+         websocketThread_.join();
+      }
+   }
+   catch (websocketpp::exception const& e)
+   {
+      LOG_ERROR_MESSAGE(e.what());
+      return systemError(boost::system::errc::invalid_argument,
+                         e.what(),
+                         ERROR_LOCATION);
+   }
+   catch (...)
+   {
+      LOG_ERROR_MESSAGE("Unknown exception stopping terminal websocket server");
+      return systemError(boost::system::errc::invalid_argument,
+                         "Unknown exception", ERROR_LOCATION);
+   }
+   return Success();
+}
+
+Error ConsoleProcessSocket::listen(
+      const std::string& terminalHandle,
+      const ConsoleProcessSocketCallbacks& callbacks)
+{
+   if (!serverRunning_)
+   {
+      return systemError(boost::system::errc::not_connected,
+                         terminalHandle,
+                         ERROR_LOCATION);
+   }
+
+   handle_ = terminalHandle;
+   callbacks_ = callbacks;
+
+   return Success();
+}
+
+Error ConsoleProcessSocket::stop(const std::string& terminalHandle)
+{
+   if (handle_.compare(terminalHandle))
+   {
+      return systemError(boost::system::errc::invalid_argument,
+                         terminalHandle,
+                         ERROR_LOCATION);
+   }
+
+   handle_.clear();
+   return Success();
+}
+
+Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
+                                     const std::string& message)
+{
+   // make sure this handle still refers to a connection before we try to
+   // send data over it
+   websocketpp::lib::error_code ec;
+   wsServer_.get_con_from_hdl(hdl_, ec);
+   if (ec.value() > 0)
+   {
+      return systemError(boost::system::errc::not_connected,
+                         ec.message(), ERROR_LOCATION);
+   }
+
+   wsServer_.send(hdl_, message, websocketpp::frame::opcode::text, ec);
+   if (ec)
+   {
+      return systemError(boost::system::errc::bad_message,
+                         ec.message(), ERROR_LOCATION);
+   }
+   return Success();
+}
+
+Error ConsoleProcessSocket::stopAll()
+{
+   Error err;
+   handle_.clear();
+   return err;
+}
+
+int ConsoleProcessSocket::connectionCount() const
+{
+   if (handle_.empty())
+      return 0;
+   else
+      return 1;
+}
+
+int ConsoleProcessSocket::port() const
+{
+   return port_;
 }
 
 void ConsoleProcessSocket::watchSocket()
