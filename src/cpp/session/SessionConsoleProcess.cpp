@@ -16,6 +16,7 @@
 #include <session/SessionConsoleProcess.hpp>
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/make_shared.hpp>
 
 #include <core/Exec.hpp>
 
@@ -789,6 +790,8 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
       core::system::ProcessOptions options,
       boost::shared_ptr<ConsoleProcessInfo> procInfo)
 {
+   boost::shared_ptr<ConsoleProcess> cp;
+
    // using websockets or RPC?
    Error error = s_terminalSocket.ensureServerRunning(createSocketCallbacks());
    if (error || s_terminalSocket.port() == 0)
@@ -814,21 +817,24 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
          // to refresh itself; this does rely on the host performing a second
          // resize to the actual available size. Clumsy, but so far this is
          // the best I've come up with.
-         pos->second->resize(25, 5);
-         return pos->second;
+         cp = pos->second;
+         cp->resize(25, 5);
       }
-      
-      // Create new process with previously used handle
-      options.terminateChildren = true;
-      boost::shared_ptr<ConsoleProcess> ptrProc(
-            new ConsoleProcess(command, options, procInfo));
-      s_procs[ptrProc->handle()] = ptrProc;
-      saveConsoleProcesses();
-      return ptrProc;
+      else
+      {
+         // Create new process with previously used handle
+         options.terminateChildren = true;
+         cp.reset(new ConsoleProcess(command, options, procInfo));
+         s_procs[cp->handle()] = cp;
+         saveConsoleProcesses();
+      }
    }
-   
-   // otherwise create a new one
-   boost::shared_ptr<ConsoleProcess> cp =  create(command, options, procInfo);
+   else
+   {
+      // otherwise create a new one
+      cp =  create(command, options, procInfo);
+   }
+
    if (cp->procInfo_->getChannelMode() == Websocket)
    {
       s_terminalSocket.listen(cp->procInfo_->getHandle(),

@@ -245,14 +245,6 @@ Error ConsoleProcessSocket::stopAll()
    return err;
 }
 
-int ConsoleProcessSocket::connectionCount() const
-{
-   if (handle_.empty())
-      return 0;
-   else
-      return 1;
-}
-
 int ConsoleProcessSocket::port() const
 {
    return port_;
@@ -268,18 +260,8 @@ void ConsoleProcessSocket::onMessage(terminalServer* s,
                                      terminalMessage_ptr msg)
 {
    std::string message = msg->get_payload();
-//   json::Value payload;
-//   json::parse(msg->get_payload(), &payload);
-//   if (payload.type() != json::ObjectType)
-//   {
-//      return;
-//   }
-
    if (connectionCallbacks_.onReceivedInput)
       connectionCallbacks_.onReceivedInput(message);
-
-   // TODO (gary) -- temporary, echo received text right back over websocket
-   //sendText(handle_, message);
 }
 
 void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hdl hdl)

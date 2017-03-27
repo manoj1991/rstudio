@@ -80,9 +80,6 @@ public:
    // stop listening to all terminals
    core::Error stopAll();
 
-   // number of terminals being monitored
-   int connectionCount() const;
-
    // network port for websocket listener; 0 means no port
    int port() const;
 
