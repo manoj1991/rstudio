@@ -191,7 +191,7 @@ public class TerminalSessionSocket
       case ConsoleProcessInfo.CHANNEL_WEBSOCKET:
          String url = "ws://localhost:8787/p/" + 
 //         String url = "ws://localhost:" +
-               consoleProcess_.getProcessInfo().getChannelId() + "/terminal." +
+               consoleProcess_.getProcessInfo().getChannelId() + "/terminal/" +
                consoleProcess_.getProcessInfo().getHandle() + "/";
          socket_ = new Websocket(url);
          socket_.addListener(new WebsocketListener() {

@@ -793,6 +793,7 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
    boost::shared_ptr<ConsoleProcess> cp;
 
    // using websockets or RPC?
+#ifdef GARYWEBSOCKETS
    Error error = s_terminalSocket.ensureServerRunning(createSocketCallbacks());
    if (error || s_terminalSocket.port() == 0)
    {
@@ -805,6 +806,9 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
       std::string port = boost::lexical_cast<std::string>(s_terminalSocket.port());
       procInfo->setChannelMode(Websocket, port);
    }
+#else
+   procInfo->setChannelMode(Rpc, "");
+#endif
 
    std::string command;
    if (procInfo->getAllowRestart() && !procInfo->getHandle().empty())

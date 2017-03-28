@@ -197,39 +197,49 @@ Error ConsoleProcessSocket::listen(
                          ERROR_LOCATION);
    }
 
-   handle_ = terminalHandle;
-   connectionCallbacks_ = callbacks;
-
+   ConsoleProcessSocketConnectionDetails details = connections_.get(terminalHandle);
+   details.handle_ = terminalHandle;
+   details.connectionCallbacks_ = callbacks;
+   connections_.set(terminalHandle, details);
    return Success();
 }
 
 Error ConsoleProcessSocket::stop(const std::string& terminalHandle)
 {
-   if (handle_.compare(terminalHandle))
+   ConsoleProcessSocketConnectionDetails details = connections_.get(terminalHandle);
+   if (details.handle_.compare(terminalHandle))
    {
       return systemError(boost::system::errc::invalid_argument,
                          terminalHandle,
                          ERROR_LOCATION);
    }
 
-   handle_.clear();
+   details = connections_.collect(terminalHandle);
    return Success();
 }
 
 Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
                                      const std::string& message)
 {
+   // do we know about this handle?
+   ConsoleProcessSocketConnectionDetails details = connections_.get(terminalHandle);
+   if (details.handle_.compare(terminalHandle))
+   {
+      std::string msg = "Unknown handle: \"" + terminalHandle + "\"";
+      return systemError(boost::system::errc::not_connected, msg, ERROR_LOCATION);
+   }
+
    // make sure this handle still refers to a connection before we try to
    // send data over it
    websocketpp::lib::error_code ec;
-   wsServer_.get_con_from_hdl(hdl_, ec);
+   wsServer_.get_con_from_hdl(details.hdl_, ec);
    if (ec.value() > 0)
    {
       return systemError(boost::system::errc::not_connected,
                          ec.message(), ERROR_LOCATION);
    }
 
-   wsServer_.send(hdl_, message, websocketpp::frame::opcode::text, ec);
+   wsServer_.send(details.hdl_, message, websocketpp::frame::opcode::text, ec);
    if (ec)
    {
       return systemError(boost::system::errc::bad_message,
@@ -240,9 +250,8 @@ Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
 
 Error ConsoleProcessSocket::stopAll()
 {
-   Error err;
-   handle_.clear();
-   return err;
+   connections_.clear();
+   return Success();
 }
 
 int ConsoleProcessSocket::port() const
@@ -259,22 +268,42 @@ void ConsoleProcessSocket::onMessage(terminalServer* s,
                                      websocketpp::connection_hdl hdl,
                                      terminalMessage_ptr msg)
 {
+   std::string handle = getHandle(s, hdl);
+   if (handle.empty())
+      return;
+   ConsoleProcessSocketConnectionDetails details = connections_.get(handle);
+
    std::string message = msg->get_payload();
-   if (connectionCallbacks_.onReceivedInput)
-      connectionCallbacks_.onReceivedInput(message);
+   if (details.connectionCallbacks_.onReceivedInput)
+      details.connectionCallbacks_.onReceivedInput(message);
 }
 
 void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hdl hdl)
 {
-   if (connectionCallbacks_.onConnectionClosed)
-      connectionCallbacks_.onConnectionClosed();
+   std::string handle = getHandle(s, hdl);
+   if (handle.empty())
+      return;
+   ConsoleProcessSocketConnectionDetails details = connections_.get(handle);
+
+   if (details.connectionCallbacks_.onConnectionClosed)
+      details.connectionCallbacks_.onConnectionClosed();
 }
 
 void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl hdl)
 {
-   hdl_ = hdl;
-   if (connectionCallbacks_.onConnectionOpened)
-      connectionCallbacks_.onConnectionOpened();
+   std::string handle = getHandle(s, hdl);
+   if (handle.empty())
+      return;
+
+   // add/update in connections map
+   ConsoleProcessSocketConnectionDetails details = connections_.get(handle);
+   details.handle_ = handle;
+   details.hdl_ = hdl;
+   connections_.set(handle, details);
+
+   // notify the specific connection, if available
+   if (details.connectionCallbacks_.onConnectionOpened)
+      details.connectionCallbacks_.onConnectionOpened();
 }
 
 void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl hdl)
@@ -288,6 +317,24 @@ void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl
 
    con->set_status(websocketpp::http::status_code::ok);
    con->set_body(output.str());
+}
+
+std::string ConsoleProcessSocket::getHandle(terminalServer* s, websocketpp::connection_hdl hdl)
+{
+   // determine handle from last part of url, e.g. xxxxx from "terminal/xxxxx/"
+   terminalServer::connection_ptr con = s->get_con_from_hdl(hdl);
+   std::string resource = con->get_resource();
+   if (resource.empty() || resource[resource.length() - 1] != '/')
+      return std::string();
+
+   // remove mandatory trailing slash
+   resource.resize(resource.length() - 1);
+
+   // everything after remaining final slash is the handle
+   size_t lastSlash = resource.find_last_of('/');
+   if (lastSlash == std::string::npos || lastSlash + 1 >= resource.length())
+      return std::string();
+   return resource.substr(lastSlash + 1);
 }
 
 } // namespace console_process

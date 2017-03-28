@@ -52,6 +52,13 @@ struct ConsoleProcessSocketConnectionCallbacks
 typedef websocketpp::server<websocketpp::config::asio> terminalServer;
 typedef terminalServer::message_ptr terminalMessage_ptr;
 
+struct ConsoleProcessSocketConnectionDetails
+{
+   std::string handle_;
+   ConsoleProcessSocketConnectionCallbacks connectionCallbacks_;
+   websocketpp::connection_hdl hdl_;
+};
+
 // Manages a websocket that channels input and output from client for
 // interactive terminals. Terminals are identified via a unique handle.
 class ConsoleProcessSocket : boost::noncopyable
@@ -85,7 +92,7 @@ public:
 
 private:
    void watchSocket();
-
+   std::string getHandle(terminalServer* s, websocketpp::connection_hdl hdl);
    void onMessage(terminalServer* s, websocketpp::connection_hdl hdl,
                   terminalMessage_ptr msg);
    void onClose(terminalServer* s, websocketpp::connection_hdl hdl);
@@ -93,15 +100,13 @@ private:
    void onHttp(terminalServer* s, websocketpp::connection_hdl hdl);
 
 private:
-   std::string handle_;
-   ConsoleProcessSocketCallbacks callbacks_;
-   ConsoleProcessSocketConnectionCallbacks connectionCallbacks_;
+   core::thread::ThreadsafeMap<std::string, ConsoleProcessSocketConnectionDetails> connections_;
 
+   ConsoleProcessSocketCallbacks callbacks_;
    int port_;
    boost::thread websocketThread_;
    bool serverRunning_;
    terminalServer wsServer_;
-   websocketpp::connection_hdl hdl_;
 };
 
 } // namespace console_process

@@ -122,7 +122,7 @@ public:
          typename std::map<K,V>::const_iterator it = map_.find(key);
          if (it != map_.end())
          {
-            std::string val = it->second;
+            V val = it->second;
             map_.erase(key);
             return val;
          }
@@ -146,6 +146,15 @@ public:
       LOCK_MUTEX(mutex_)
       {
          map_.erase(key);
+      }
+      END_LOCK_MUTEX
+   }
+
+   void clear()
+   {
+      LOCK_MUTEX(mutex_)
+      {
+         map_.clear();
       }
       END_LOCK_MUTEX
    }
