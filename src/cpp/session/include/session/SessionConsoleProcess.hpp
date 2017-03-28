@@ -153,6 +153,7 @@ private:
                  const std::string& output);
    void onExit(int exitCode);
    void onHasSubprocs(bool hasSubProcs);
+   void processQueuedInput(core::system::ProcessOperations& ops);
 
    std::string bufferedOutput() const;
    void enqueOutputEvent(const std::string& output);
@@ -198,6 +199,10 @@ private:
 
    // is the underlying process started?
    bool started_;
+
+   // cached point to process options, for use in websocket thread callbacks
+   core::system::ProcessOperations* pOps_;
+   boost::mutex mutex_;
 };
 
 

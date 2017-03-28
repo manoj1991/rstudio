@@ -59,7 +59,8 @@ void saveConsoleProcesses();
 
 ConsoleProcess::ConsoleProcess(boost::shared_ptr<ConsoleProcessInfo> procInfo)
    : procInfo_(procInfo), interrupt_(false), newCols_(-1), newRows_(-1),
-     childProcsSent_(false), lastInputSequence_(kIgnoreSequence), started_(false)
+     childProcsSent_(false), lastInputSequence_(kIgnoreSequence), started_(false),
+     pOps_(NULL)
 {
    regexInit();
 
@@ -73,7 +74,7 @@ ConsoleProcess::ConsoleProcess(const std::string& command,
                                boost::shared_ptr<ConsoleProcessInfo> procInfo)
    : command_(command), options_(options), procInfo_(procInfo),
      interrupt_(false), newCols_(-1), newRows_(-1), childProcsSent_(false),
-     lastInputSequence_(kIgnoreSequence), started_(false)
+     lastInputSequence_(kIgnoreSequence), started_(false), pOps_(NULL)
 {
    commonInit();
 }
@@ -84,7 +85,7 @@ ConsoleProcess::ConsoleProcess(const std::string& program,
                                boost::shared_ptr<ConsoleProcessInfo> procInfo)
    : program_(program), args_(args), options_(options), procInfo_(procInfo),
      interrupt_(false), newCols_(-1), newRows_(-1), childProcsSent_(false),
-     lastInputSequence_(kIgnoreSequence), started_(false)
+     lastInputSequence_(kIgnoreSequence), started_(false), pOps_(NULL)
 {
    commonInit();
 }
@@ -320,6 +321,34 @@ bool ConsoleProcess::onContinue(core::system::ProcessOperations& ops)
    if (interrupt_)
       return false;
 
+
+   if (procInfo_->getChannelMode() == Rpc)
+   {
+      processQueuedInput(ops);
+   }
+   else
+   {
+      LOCK_MUTEX(mutex_)
+      {
+         pOps_ = &ops;
+      }
+      END_LOCK_MUTEX
+   }
+
+
+   if (newCols_ != -1 && newRows_ != -1)
+   {
+      ops.ptySetSize(newCols_, newRows_);
+      newCols_ = -1;
+      newRows_ = -1;
+   }
+   
+   // continue
+   return true;
+}
+
+void ConsoleProcess::processQueuedInput(core::system::ProcessOperations& ops)
+{
    // process input queue
    Input input = dequeInput();
    while (!input.empty())
@@ -360,16 +389,6 @@ bool ConsoleProcess::onContinue(core::system::ProcessOperations& ops)
 
       input = dequeInput();
    }
-
-   if (newCols_ != -1 && newRows_ != -1)
-   {
-      ops.ptySetSize(newCols_, newRows_);
-      newCols_ = -1;
-      newRows_ = -1;
-   }
-   
-   // continue
-   return true;
 }
 
 void ConsoleProcess::deleteLogFile() const
@@ -393,6 +412,13 @@ void ConsoleProcess::enqueOutputEvent(const std::string &output)
    std::string trimmedOutput = output;
    string_utils::trimLeadingLines(procInfo_->getMaxOutputLines(), &trimmedOutput);
 
+   if (procInfo_->getChannelMode() == Websocket)
+   {
+      s_terminalSocket.sendText(procInfo_->getHandle(), output);
+      return;
+   }
+
+   // Rpc
    json::Object data;
    data["handle"] = handle();
    data["output"] = trimmedOutput;
@@ -405,13 +431,6 @@ void ConsoleProcess::onStdout(core::system::ProcessOperations& ops,
 {
    if (options_.smartTerminal)
    {
-      if (procInfo_->getChannelMode() == Websocket)
-      {
-         s_terminalSocket.sendText(procInfo_->getHandle(), output);
-         return;
-      }
-
-      // Rpc
       enqueOutputEvent(output);
       return;
    }
@@ -793,7 +812,6 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
    boost::shared_ptr<ConsoleProcess> cp;
 
    // using websockets or RPC?
-#ifdef GARYWEBSOCKETS
    Error error = s_terminalSocket.ensureServerRunning(createSocketCallbacks());
    if (error || s_terminalSocket.port() == 0)
    {
@@ -806,9 +824,6 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
       std::string port = boost::lexical_cast<std::string>(s_terminalSocket.port());
       procInfo->setChannelMode(Websocket, port);
    }
-#else
-   procInfo->setChannelMode(Rpc, "");
-#endif
 
    std::string command;
    if (procInfo->getAllowRestart() && !procInfo->getHandle().empty())
@@ -856,17 +871,27 @@ ConsoleProcessSocketConnectionCallbacks ConsoleProcess::createConsoleProcessSock
    return cb;
 }
 
-// received input from websocket (e.g. user typing on client)
+// received input from websocket (e.g. user typing on client); called on
+// different thread
 void ConsoleProcess::onReceivedInput(const std::string& input)
 {
-   enqueInput(Input(input));
+   LOCK_MUTEX(mutex_)
+   {
+      enqueInput(Input(input));
+      if (pOps_)
+      {
+         processQueuedInput(*pOps_);
+      }
+   }
+   END_LOCK_MUTEX
 }
 
+// websocket connection closed; called on different thread
 void ConsoleProcess::onConnectionClosed()
 {
-
 }
 
+// websocket connection opened; called on different thread
 void ConsoleProcess::onConnectionOpened()
 {
 }
