@@ -208,11 +208,11 @@ public class TerminalSessionSocket
             url = GWT.getHostPageBaseURL();
             if (url.startsWith("https:"))
             {
-               url = "wss:" + url.substring(6) + "/p/" + urlSuffix;
+               url = "wss:" + url.substring(6) + "p/" + urlSuffix;
             } 
             else if (url.startsWith("http:"))
             {
-               url = "ws:" + url.substring(5) + "/p/" + urlSuffix;
+               url = "ws:" + url.substring(5) + "p/" + urlSuffix;
             }
             else
             {
