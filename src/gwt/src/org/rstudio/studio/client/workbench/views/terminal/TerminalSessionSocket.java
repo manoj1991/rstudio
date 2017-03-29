@@ -17,6 +17,8 @@ package org.rstudio.studio.client.workbench.views.terminal;
 
 import java.util.LinkedList;
 
+import org.rstudio.core.client.BrowseCap;
+import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.HandlerRegistrations;
 import org.rstudio.core.client.Stopwatch;
 import org.rstudio.studio.client.RStudioGinjector;
@@ -29,11 +31,12 @@ import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.terminal.events.TerminalDataInputEvent;
 import org.rstudio.studio.client.workbench.views.terminal.xterm.XTermWidget;
 
+import com.google.gwt.core.client.GWT;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.inject.Inject;
 import com.sksamuel.gwt.websockets.CloseEvent;
 import com.sksamuel.gwt.websockets.Websocket;
-import com.sksamuel.gwt.websockets.WebsocketListener;
+import com.sksamuel.gwt.websockets.WebsocketListenerExt;
 
 /**
  * Manages input and output for the terminal session.
@@ -76,10 +79,11 @@ public class TerminalSessionSocket
 
          boolean matches(String input, long runningAverage)
          {
-            if (input != null && input_.equals(input))
+            // startsWith allows better chance of matching on Windows, where 
+            // winpty often follows each typed character with an escape sequence
+            if (input != null && input.startsWith(input_))
             {
-               duration_ = stopWatch_.mark("Average " + runningAverage + 
-                     " [" + input + "]");
+               duration_ = stopWatch_.mark("Average " + runningAverage);
                return true;
             }
             return false;
@@ -185,16 +189,43 @@ public class TerminalSessionSocket
       switch (consoleProcess_.getProcessInfo().getChannelMode())
       {
       case ConsoleProcessInfo.CHANNEL_RPC:
+         Debug.devlog("Using RPC");
          callback.onConnected();
          break;
          
       case ConsoleProcessInfo.CHANNEL_WEBSOCKET:
-         String url = "ws://localhost:8787/p/" + 
-//         String url = "ws://localhost:" +
-               consoleProcess_.getProcessInfo().getChannelId() + "/terminal/" +
+         // For desktop IDE, talk directly to the websocket, anything else, go through
+         // the server via the /p proxy.
+         String urlSuffix = consoleProcess_.getProcessInfo().getChannelId() + "/terminal/" + 
                consoleProcess_.getProcessInfo().getHandle() + "/";
+         String url;
+         if (BrowseCap.isWindowsDesktop() || BrowseCap.isCocoaDesktop() || BrowseCap.isLinuxDesktop())
+         {
+            url = "ws://127.0.0.1:" + urlSuffix;
+         }
+         else
+         {
+            url = GWT.getHostPageBaseURL();
+            if (url.startsWith("https:"))
+            {
+               url = "wss:" + url.substring(6) + "/p/" + urlSuffix;
+            } 
+            else if (url.startsWith("http:"))
+            {
+               url = "ws:" + url.substring(5) + "/p/" + urlSuffix;
+            }
+            else
+            {
+               // TODO (gary) fall back to RPC if can't discover the protocol
+               // to use
+               callback.onError("Unable to discover websocket protocol");
+               return;
+            }
+         }
+
+         Debug.devlog("Connecting to " + url);
          socket_ = new Websocket(url);
-         socket_.addListener(new WebsocketListener() {
+         socket_.addListener(new WebsocketListenerExt() {
 
             @Override
             public void onClose(CloseEvent event)
@@ -212,6 +243,14 @@ public class TerminalSessionSocket
             public void onOpen()
             {
                callback.onConnected();
+            }
+
+            @Override
+            public void onError()
+            {
+               // TODO (gary) fall back to RPC if unable to connect
+               callback.onError("Unable to connect to websocket");
+               return;
             }
          });
          
