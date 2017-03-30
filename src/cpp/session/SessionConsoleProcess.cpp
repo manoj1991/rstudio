@@ -43,7 +43,7 @@ ConsoleProcessSocket s_terminalSocket;
 // called when the terminal websocket closes
 void onSocketClosed()
 {
-   // TODO (gary) tell all ConsoleProcessInfo's that their socket is gone
+   // TODO (gary) Anything to do here?
 }
 
 ConsoleProcessSocketCallbacks createSocketCallbacks()
@@ -68,7 +68,7 @@ ConsoleProcess::ConsoleProcess(boost::shared_ptr<ConsoleProcessInfo> procInfo)
    // dummy \n so we can tell the first line is a complete line.
    procInfo_->appendToOutputBuffer('\n');
 }
-   
+
 ConsoleProcess::ConsoleProcess(const std::string& command,
                                const core::system::ProcessOptions& options,
                                boost::shared_ptr<ConsoleProcessInfo> procInfo)
@@ -78,7 +78,7 @@ ConsoleProcess::ConsoleProcess(const std::string& command,
 {
    commonInit();
 }
-   
+
 ConsoleProcess::ConsoleProcess(const std::string& program,
                                const std::vector<std::string>& args,
                                const core::system::ProcessOptions& options,
@@ -536,6 +536,12 @@ void ConsoleProcess::onHasSubprocs(bool hasSubprocs)
    }
 }
 
+void ConsoleProcess::setRpcMode()
+{
+   s_terminalSocket.stopListening(handle());
+   procInfo_->setChannelMode(Rpc, "");
+}
+
 core::json::Object ConsoleProcess::toJson() const
 {
    return procInfo_->toJson();
@@ -776,6 +782,25 @@ Error procGetBufferChunk(const json::JsonRpcRequest& request,
    return Success();
 }
 
+Error procUseRpc(const json::JsonRpcRequest& request,
+                 json::JsonRpcResponse* pResponse)
+{
+   std::string handle;
+
+   Error error = json::readParams(request.params,
+                                  &handle);
+   if (error)
+      return error;
+
+   ProcTable::const_iterator pos = s_procs.find(handle);
+   if (pos == s_procs.end())
+      return systemError(boost::system::errc::invalid_argument, ERROR_LOCATION);
+
+   // Used to downgrade to Rpc after client was unable to connect to Websocket
+   pos->second->setRpcMode();
+   return Success();
+}
+
 boost::shared_ptr<ConsoleProcess> ConsoleProcess::create(
       const std::string& command,
       core::system::ProcessOptions options,
@@ -813,11 +838,10 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
 
    // using websockets or RPC?
    Error error = s_terminalSocket.ensureServerRunning(createSocketCallbacks());
-   if (error || s_terminalSocket.port() == 0)
+   if (error)
    {
       procInfo->setChannelMode(Rpc, "");
-      if (error)
-         LOG_ERROR(error);
+      LOG_ERROR(error);
    }
    else
    {
@@ -889,11 +913,21 @@ void ConsoleProcess::onReceivedInput(const std::string& input)
 // websocket connection closed; called on different thread
 void ConsoleProcess::onConnectionClosed()
 {
+   std::string msg("Websocket connection closed for \"");
+   msg += handle();
+   msg += "\"";
+   LOG_INFO_MESSAGE(msg);
+
+   s_terminalSocket.stopListening(handle());
 }
 
 // websocket connection opened; called on different thread
 void ConsoleProcess::onConnectionOpened()
 {
+   std::string msg("Websocket connection opened for \"");
+   msg += handle();
+   msg += "\"";
+   LOG_INFO_MESSAGE(msg);
 }
 
 void PasswordManager::attach(
@@ -1128,7 +1162,8 @@ Error initialize()
       (bind(registerRpcMethod, "process_set_caption", procSetCaption))
       (bind(registerRpcMethod, "process_set_title", procSetTitle))
       (bind(registerRpcMethod, "process_erase_buffer", procEraseBuffer))
-      (bind(registerRpcMethod, "process_get_buffer_chunk", procGetBufferChunk));
+      (bind(registerRpcMethod, "process_get_buffer_chunk", procGetBufferChunk))
+      (bind(registerRpcMethod, "process_use_rpc", procUseRpc));
 
    return initBlock.execute();
 }

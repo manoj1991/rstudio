@@ -17,15 +17,18 @@ package org.rstudio.studio.client.workbench.views.terminal;
 
 import java.util.LinkedList;
 
-import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.HandlerRegistrations;
 import org.rstudio.core.client.Stopwatch;
 import org.rstudio.studio.client.RStudioGinjector;
+import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.common.console.ConsoleOutputEvent;
 import org.rstudio.studio.client.common.console.ConsoleProcess;
 import org.rstudio.studio.client.common.console.ConsoleProcessInfo;
 import org.rstudio.studio.client.common.shell.ShellInput;
+import org.rstudio.studio.client.server.ServerError;
+import org.rstudio.studio.client.server.ServerRequestCallback;
+import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.terminal.events.TerminalDataInputEvent;
@@ -186,7 +189,7 @@ public class TerminalSessionSocket
 
       addHandlerRegistration(consoleProcess_.addConsoleOutputHandler(this));
 
-      switch (consoleProcess_.getProcessInfo().getChannelMode())
+      switch (consoleProcess_.getChannelMode())
       {
       case ConsoleProcessInfo.CHANNEL_RPC:
          Debug.devlog("Using RPC");
@@ -194,12 +197,13 @@ public class TerminalSessionSocket
          break;
          
       case ConsoleProcessInfo.CHANNEL_WEBSOCKET:
-         // For desktop IDE, talk directly to the websocket, anything else, go through
-         // the server via the /p proxy.
+              
+         // For desktop IDE, talk directly to the websocket, anything else, go 
+         // through the server via the /p proxy.
          String urlSuffix = consoleProcess_.getProcessInfo().getChannelId() + "/terminal/" + 
                consoleProcess_.getProcessInfo().getHandle() + "/";
          String url;
-         if (BrowseCap.isWindowsDesktop() || BrowseCap.isCocoaDesktop() || BrowseCap.isLinuxDesktop())
+         if (Desktop.isDesktop())
          {
             url = "ws://127.0.0.1:" + urlSuffix;
          }
@@ -216,8 +220,6 @@ public class TerminalSessionSocket
             }
             else
             {
-               // TODO (gary) fall back to RPC if can't discover the protocol
-               // to use
                callback.onError("Unable to discover websocket protocol");
                return;
             }
@@ -225,12 +227,14 @@ public class TerminalSessionSocket
 
          Debug.devlog("Connecting to " + url);
          socket_ = new Websocket(url);
-         socket_.addListener(new WebsocketListenerExt() {
-
+         socket_.addListener(new WebsocketListenerExt() 
+         {
             @Override
             public void onClose(CloseEvent event)
             {
-               // TODO (gary)
+               Debug.devlog("Disconnected websocket for " + 
+                     consoleProcess_.getProcessInfo().getHandle());
+               socket_ = null;
             }
 
             @Override
@@ -248,8 +252,25 @@ public class TerminalSessionSocket
             @Override
             public void onError()
             {
-               // TODO (gary) fall back to RPC if unable to connect
-               callback.onError("Unable to connect to websocket");
+               Debug.devlog("Unable to connect websocket, switching back to rpc");
+               socket_ = null;
+               
+               // Unable to connect client to server via websocket; let server
+               // know we'll be using rpc, instead
+               consoleProcess_.useRpcMode(new ServerRequestCallback<Void>()
+               {
+                  @Override
+                  public void onResponseReceived(Void response)
+                  {
+                     callback.onConnected();
+                  }
+
+                  @Override
+                  public void onError(ServerError error)
+                  {
+                     callback.onError("Unable to switch back to Rpc mode");
+                  }
+               });
                return;
             }
          });
@@ -274,7 +295,7 @@ public class TerminalSessionSocket
                              String input,
                              VoidServerRequestCallback requestCallback)
    {
-      switch (consoleProcess_.getProcessInfo().getChannelMode())
+      switch (consoleProcess_.getChannelMode())
       {
       case ConsoleProcessInfo.CHANNEL_RPC:
          consoleProcess_.writeStandardInput(
@@ -334,7 +355,8 @@ public class TerminalSessionSocket
 
    public void disconnect()
    {
-      consoleProcess_ = null;
+      socket_.close();
+      socket_ = null;
       registrations_.removeHandler();
    }
  

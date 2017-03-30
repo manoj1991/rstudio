@@ -54,7 +54,6 @@ public:
 
    ~SocketHarness()
    {
-      socket_.stopServer();
    }
 
    bool ensureServerRunning()
@@ -72,7 +71,7 @@ public:
    {
       if (!input.compare(kCloseMessage))
       {
-         socket_.stop("abcd");
+         socket_.stopListening("abcd");
          socket_.sendText("abcd", kCloseMessage);
          return;
       }
@@ -86,15 +85,9 @@ public:
       return (!err);
    }
 
-   bool stop(const std::string& terminalHandle)
+   bool stopListening(const std::string& terminalHandle)
    {
-      core::Error err = socket_.stop(terminalHandle);
-      return (!err);
-   }
-
-   bool stopServer()
-   {
-      core::Error err = socket_.stopServer();
+      core::Error err = socket_.stopListening(terminalHandle);
       return (!err);
    }
 
@@ -225,9 +218,9 @@ public:
       return pServerSocket_->listen(handle_, createConsoleProcessSocketConnectionCallbacks());
    }
 
-   bool stop()
+   bool stopListening()
    {
-      return pServerSocket_->stop(handle_);
+      return pServerSocket_->stopListening(handle_);
    }
 
    bool sendMessage(const std::string& msg)
@@ -257,7 +250,7 @@ private:
 
 } // anonymous namespace
 
-context("input output websocket for interactive terminals")
+context("websocket for interactive terminals")
 {
    const std::string handle1 = "abcd";
 
@@ -274,13 +267,11 @@ context("input output websocket for interactive terminals")
       expect_false(client.listen());
    }
 
-   test_that("server port returned correctly when started and stopped")
+   test_that("server port returned correctly when started")
    {
       boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
       expect_true(pSocket->ensureServerRunning());
       expect_true(pSocket->port() > 0);
-      expect_true(pSocket->stopServer());
-      expect_true(pSocket->port() == 0);
    }
 
    test_that("stop listening to unknown handle returns error")
@@ -288,7 +279,7 @@ context("input output websocket for interactive terminals")
       boost::shared_ptr<SocketHarness> pSocket = boost::make_shared<SocketHarness>();
       expect_true(pSocket->ensureServerRunning());
       SocketClient client(handle1, pSocket);
-      expect_false(client.stop());
+      expect_false(client.stopListening());
    }
 
    test_that("can start and stop listening to a handle")
@@ -297,8 +288,6 @@ context("input output websocket for interactive terminals")
       expect_true(pSocket->ensureServerRunning());
       SocketClient client(handle1, pSocket);
       expect_true(client.listen());
-      expect_true(client.stop());
-      expect_true(pSocket->stopServer());
    }
 
 //   test_that("can connect to server and send a message")

@@ -27,8 +27,23 @@ using namespace rstudio::core;
 
 namespace {
 
+// rapid reseeding via srand(time) causes same "random" sequence to be
+// returned by rand
 bool s_didSeedRand = false;
 
+
+// number of seconds to keep socket open before first connection has been made
+int s_joinSeconds = 180;
+
+// number of seconds to wait before shutting down socket when all connections
+// have closedj
+int s_leaveSeconds = 10;
+
+// the number of active connections, and a timer that shuts us down when we've
+// been without connections for too long
+int s_activeConnections = 0;
+boost::asio::io_service s_ioService;
+boost::asio::deadline_timer s_shutdownTimer(s_ioService);
 
 } // anonymous namespace
 
@@ -43,7 +58,7 @@ ConsoleProcessSocket::~ConsoleProcessSocket()
 {
    try
    {
-      stopAll();
+      stopAllConnections();
       stopServer();
    }
    catch (...)
@@ -157,13 +172,13 @@ Error ConsoleProcessSocket::ensureServerRunning(
    return Success();
 }
 
-Error ConsoleProcessSocket::stopServer()
+void ConsoleProcessSocket::stopServer()
 {
    try
    {
       if (serverRunning_)
       {
-         stopAll();
+         stopAllConnections();
          wsServer_.stop();
          serverRunning_ = false;
          port_ = 0;
@@ -173,22 +188,16 @@ Error ConsoleProcessSocket::stopServer()
    catch (websocketpp::exception const& e)
    {
       LOG_ERROR_MESSAGE(e.what());
-      return systemError(boost::system::errc::invalid_argument,
-                         e.what(),
-                         ERROR_LOCATION);
    }
    catch (...)
    {
       LOG_ERROR_MESSAGE("Unknown exception stopping terminal websocket server");
-      return systemError(boost::system::errc::invalid_argument,
-                         "Unknown exception", ERROR_LOCATION);
    }
-   return Success();
 }
 
 Error ConsoleProcessSocket::listen(
       const std::string& terminalHandle,
-      const ConsoleProcessSocketConnectionCallbacks& callbacks)
+      const ConsoleProcessSocketConnectionCallbacks& connectionCallbacks)
 {
    if (!serverRunning_)
    {
@@ -199,12 +208,12 @@ Error ConsoleProcessSocket::listen(
 
    ConsoleProcessSocketConnectionDetails details = connections_.get(terminalHandle);
    details.handle_ = terminalHandle;
-   details.connectionCallbacks_ = callbacks;
+   details.connectionCallbacks_ = connectionCallbacks;
    connections_.set(terminalHandle, details);
    return Success();
 }
 
-Error ConsoleProcessSocket::stop(const std::string& terminalHandle)
+Error ConsoleProcessSocket::stopListening(const std::string& terminalHandle)
 {
    ConsoleProcessSocketConnectionDetails details = connections_.get(terminalHandle);
    if (details.handle_.compare(terminalHandle))
@@ -248,10 +257,9 @@ Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
    return Success();
 }
 
-Error ConsoleProcessSocket::stopAll()
+void ConsoleProcessSocket::stopAllConnections()
 {
    connections_.clear();
-   return Success();
 }
 
 int ConsoleProcessSocket::port() const
@@ -283,6 +291,9 @@ void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hd
    std::string handle = getHandle(s, hdl);
    if (handle.empty())
       return;
+
+   s_activeConnections--;
+
    ConsoleProcessSocketConnectionDetails details = connections_.get(handle);
 
    if (details.connectionCallbacks_.onConnectionClosed)
@@ -294,6 +305,8 @@ void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl
    std::string handle = getHandle(s, hdl);
    if (handle.empty())
       return;
+
+   s_activeConnections++;
 
    // add/update in connections map
    ConsoleProcessSocketConnectionDetails details = connections_.get(handle);
@@ -308,15 +321,9 @@ void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl
 
 void ConsoleProcessSocket::onHttp(terminalServer* s, websocketpp::connection_hdl hdl)
 {
+   // We could return diagnostics here if we had some, but for now just 404
    terminalServer::connection_ptr con = s->get_con_from_hdl(hdl);
-
-   std::stringstream output;
-   output << "<html><body><pre>" << std::endl;
-   output << "Interesting diagnostics here.";
-   output << "</pre></body><html>" << std::endl;
-
-   con->set_status(websocketpp::http::status_code::ok);
-   con->set_body(output.str());
+   con->set_status(websocketpp::http::status_code::not_found);
 }
 
 std::string ConsoleProcessSocket::getHandle(terminalServer* s, websocketpp::connection_hdl hdl)

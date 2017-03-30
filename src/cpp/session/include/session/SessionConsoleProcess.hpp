@@ -137,6 +137,9 @@ public:
    void deleteLogFile() const;
    void setNotBusy() { procInfo_->setHasChildProcs(false); }
 
+   // Used to downgrade to RPC mode after failed attempt to connect websocket
+   void setRpcMode();
+
    // Get the given (0-based) chunk of the saved buffer; if more is available
    // after the requested chunk, *pMoreAvailable will be set to true
    std::string getSavedBufferChunk(int chunk, bool* pMoreAvailable) const;

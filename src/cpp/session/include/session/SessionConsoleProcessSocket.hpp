@@ -31,6 +31,27 @@ namespace rstudio {
 namespace session {
 namespace console_process {
 
+// Overview: ConsoleProcessSocket manages a single websocket, and
+// multiple connections to that websocket, for the purpose of high-
+// speed communication of input/output for interactive terminals
+// spawned by the server, and displayed in the client.
+//
+// There are two groups of callbacks.
+//
+// (1) ConsoleProcessSocketCallbacks are at the "socket" level, namely,
+//     related to the single socket this class manages.
+//
+// (2) ConsoleProcessSocketConnectionCallbacks are related to connections.
+//     Each connections made will supply a unique set of these callbacks,
+//     and will receive callbacks only related to that connection.
+//
+// Each connection MUST be made with a URL ending with /xxxx/ where "xxxx"
+// is some textual unique handle for that connection. In practice, this is
+// the terminal handle string used elsewhere in the codebase. This uniqueId
+// is used to dispatch callbacks, and to send output to the right connection.
+//
+// IMPORTANT: Callbacks may be dispatched on a background thread.
+
 struct ConsoleProcessSocketCallbacks
 {
    // invoked when socket closes
@@ -70,28 +91,26 @@ public:
    // start the websocket servicing thread
    core::Error ensureServerRunning(const ConsoleProcessSocketCallbacks& callbacks);
 
-   // stop the websocket servicing thread, if running
-   core::Error stopServer();
-
-   // start receiving callbacks for given connection
+   // start receiving callbacks for given connection; client should call
+   // before making the connection to ensure all callbacks are received
    core::Error listen(const std::string& terminalHandle,
                       const ConsoleProcessSocketConnectionCallbacks& callbacks);
 
    // stop listening to given terminal handle
-   core::Error stop(const std::string& terminalHandle);
+   core::Error stopListening(const std::string& terminalHandle);
 
    // send text to client
    core::Error sendText(const std::string& terminalHandle,
                         const std::string& message);
-
-   // stop listening to all terminals
-   core::Error stopAll();
 
    // network port for websocket listener; 0 means no port
    int port() const;
 
 private:
    void watchSocket();
+
+   void stopServer();
+   void stopAllConnections();
    std::string getHandle(terminalServer* s, websocketpp::connection_hdl hdl);
    void onMessage(terminalServer* s, websocketpp::connection_hdl hdl,
                   terminalMessage_ptr msg);
