@@ -16,7 +16,6 @@
 #include <session/SessionConsoleProcess.hpp>
 
 #include <boost/algorithm/string/predicate.hpp>
-#include <boost/make_shared.hpp>
 
 #include <core/Exec.hpp>
 
