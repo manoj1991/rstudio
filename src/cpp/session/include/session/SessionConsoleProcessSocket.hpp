@@ -19,6 +19,7 @@
 
 #include <boost/function.hpp>
 #include <boost/scoped_ptr.hpp>
+#include <boost/asio.hpp>
 
 #include <core/Error.hpp>
 #include <core/Thread.hpp>
@@ -36,27 +37,16 @@ namespace console_process {
 // speed communication of input/output for interactive terminals
 // spawned by the server, and displayed in the client.
 //
-// There are two groups of callbacks.
-//
-// (1) ConsoleProcessSocketCallbacks are at the "socket" level, namely,
-//     related to the single socket this class manages.
-//
-// (2) ConsoleProcessSocketConnectionCallbacks are related to connections.
-//     Each connections made will supply a unique set of these callbacks,
-//     and will receive callbacks only related to that connection.
+// ConsoleProcessSocketConnectionCallbacks are related to connections.
+// Each connections made will supply a unique set of these callbacks,
+// and will receive callbacks only related to that connection.
 //
 // Each connection MUST be made with a URL ending with /xxxx/ where "xxxx"
 // is some textual unique handle for that connection. In practice, this is
 // the terminal handle string used elsewhere in the codebase. This uniqueId
 // is used to dispatch callbacks, and to send output to the right connection.
 //
-// IMPORTANT: Callbacks may be dispatched on a background thread.
-
-struct ConsoleProcessSocketCallbacks
-{
-   // invoked when socket closes
-   boost::function<void ()> onSocketClosed;
-};
+// IMPORTANT: Callbacks are dispatched on a background thread.
 
 struct ConsoleProcessSocketConnectionCallbacks
 {
@@ -89,7 +79,7 @@ public:
    ~ConsoleProcessSocket();
 
    // start the websocket servicing thread
-   core::Error ensureServerRunning(const ConsoleProcessSocketCallbacks& callbacks);
+   core::Error ensureServerRunning();
 
    // start receiving callbacks for given connection; client should call
    // before making the connection to ensure all callbacks are received
@@ -110,7 +100,7 @@ private:
    void watchSocket();
 
    void stopServer();
-   void stopAllConnections();
+   void releaseAllConnections();
    std::string getHandle(terminalServer* s, websocketpp::connection_hdl hdl);
    void onMessage(terminalServer* s, websocketpp::connection_hdl hdl,
                   terminalMessage_ptr msg);
@@ -118,14 +108,17 @@ private:
    void onOpen(terminalServer* s, websocketpp::connection_hdl hdl);
    void onHttp(terminalServer* s, websocketpp::connection_hdl hdl);
 
+   void onServerTimeout(boost::system::error_code ec);
+
 private:
    core::thread::ThreadsafeMap<std::string, ConsoleProcessSocketConnectionDetails> connections_;
 
-   ConsoleProcessSocketCallbacks callbacks_;
    int port_;
    boost::thread websocketThread_;
    bool serverRunning_;
-   terminalServer wsServer_;
+   boost::shared_ptr<terminalServer> pwsServer_;
+
+   int activeConnections_;
 };
 
 } // namespace console_process

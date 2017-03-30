@@ -35,24 +35,9 @@ namespace session {
 namespace console_process {
 
 namespace {
-
-typedef std::map<std::string, boost::shared_ptr<ConsoleProcess> > ProcTable;
-ProcTable s_procs;
-ConsoleProcessSocket s_terminalSocket;
-
-// called when the terminal websocket closes
-void onSocketClosed()
-{
-   LOG_INFO_MESSAGE("Terminal websocket closed");
-}
-
-ConsoleProcessSocketCallbacks createSocketCallbacks()
-{
-   ConsoleProcessSocketCallbacks cb;
-   cb.onSocketClosed = boost::bind(&onSocketClosed);
-   return cb;
-}
-
+   typedef std::map<std::string, boost::shared_ptr<ConsoleProcess> > ProcTable;
+   ProcTable s_procs;
+   ConsoleProcessSocket s_terminalSocket;
 } // anonymous namespace
 
 void saveConsoleProcesses();
@@ -327,13 +312,14 @@ bool ConsoleProcess::onContinue(core::system::ProcessOperations& ops)
    }
    else
    {
+      // capture weak reference to the callbacks so websocket callback
+      // can use them
       LOCK_MUTEX(mutex_)
       {
          pOps_ = ops.weak_from_this();
       }
       END_LOCK_MUTEX
    }
-
 
    if (newCols_ != -1 && newRows_ != -1)
    {
@@ -831,21 +817,34 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::create(
 // previously used handle
 boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
       core::system::ProcessOptions options,
-      boost::shared_ptr<ConsoleProcessInfo> procInfo)
+      boost::shared_ptr<ConsoleProcessInfo> procInfo,
+      bool enableWebsockets)
 {
    boost::shared_ptr<ConsoleProcess> cp;
 
-   // using websockets or RPC?
-   Error error = s_terminalSocket.ensureServerRunning(createSocketCallbacks());
-   if (error)
+   // Use websocket as preferred communication channel; it can fail
+   // here if unable to establish the server-side of things, in which case
+   // fallback to using Rpc.
+   //
+   // It can also fail later when client tries to connect; fallback for that
+   // happens from the client-side via RPC call procUseRpc.
+   if (enableWebsockets)
    {
-      procInfo->setChannelMode(Rpc, "");
-      LOG_ERROR(error);
+      Error error = s_terminalSocket.ensureServerRunning();
+      if (error)
+      {
+         procInfo->setChannelMode(Rpc, "");
+         LOG_ERROR(error);
+      }
+      else
+      {
+         std::string port = boost::lexical_cast<std::string>(s_terminalSocket.port());
+         procInfo->setChannelMode(Websocket, port);
+      }
    }
    else
    {
-      std::string port = boost::lexical_cast<std::string>(s_terminalSocket.port());
-      procInfo->setChannelMode(Websocket, port);
+      procInfo->setChannelMode(Rpc, "");
    }
 
    std::string command;
@@ -879,6 +878,7 @@ boost::shared_ptr<ConsoleProcess> ConsoleProcess::createTerminalProcess(
 
    if (cp->procInfo_->getChannelMode() == Websocket)
    {
+      // start watching for websocket callbacks
       s_terminalSocket.listen(cp->procInfo_->getHandle(),
                               cp->createConsoleProcessSocketConnectionCallbacks());
    }
@@ -913,21 +913,12 @@ void ConsoleProcess::onReceivedInput(const std::string& input)
 // websocket connection closed; called on different thread
 void ConsoleProcess::onConnectionClosed()
 {
-   std::string msg("Websocket connection closed for \"");
-   msg += handle();
-   msg += "\"";
-   LOG_INFO_MESSAGE(msg);
-
    s_terminalSocket.stopListening(handle());
 }
 
 // websocket connection opened; called on different thread
 void ConsoleProcess::onConnectionOpened()
 {
-   std::string msg("Websocket connection opened for \"");
-   msg += handle();
-   msg += "\"";
-   LOG_INFO_MESSAGE(msg);
 }
 
 void PasswordManager::attach(

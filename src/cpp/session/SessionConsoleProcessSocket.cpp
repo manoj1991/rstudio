@@ -15,6 +15,8 @@
 
 #include <session/SessionConsoleProcessSocket.hpp>
 
+#include <boost/make_shared.hpp>
+
 #include <core/FilePath.hpp>
 #include <core/json/Json.hpp>
 
@@ -28,29 +30,16 @@ using namespace rstudio::core;
 namespace {
 
 // rapid reseeding via srand(time) causes same "random" sequence to be
-// returned by rand
+// returned by rand; only an issue for unit tests, really
 bool s_didSeedRand = false;
-
-
-// number of seconds to keep socket open before first connection has been made
-int s_joinSeconds = 180;
-
-// number of seconds to wait before shutting down socket when all connections
-// have closedj
-int s_leaveSeconds = 10;
-
-// the number of active connections, and a timer that shuts us down when we've
-// been without connections for too long
-int s_activeConnections = 0;
-boost::asio::io_service s_ioService;
-boost::asio::deadline_timer s_shutdownTimer(s_ioService);
 
 } // anonymous namespace
 
 ConsoleProcessSocket::ConsoleProcessSocket()
    :
      port_(0),
-     serverRunning_(false)
+     serverRunning_(false),
+     activeConnections_(0)
 {
 }
 
@@ -58,7 +47,6 @@ ConsoleProcessSocket::~ConsoleProcessSocket()
 {
    try
    {
-      stopAllConnections();
       stopServer();
    }
    catch (...)
@@ -66,11 +54,8 @@ ConsoleProcessSocket::~ConsoleProcessSocket()
    }
 }
 
-Error ConsoleProcessSocket::ensureServerRunning(
-      const ConsoleProcessSocketCallbacks& callbacks)
+Error ConsoleProcessSocket::ensureServerRunning()
 {
-   callbacks_ = callbacks;
-
    if (serverRunning_)
       return Success();
 
@@ -89,17 +74,19 @@ Error ConsoleProcessSocket::ensureServerRunning(
 
    try
    {
-      wsServer_.set_access_channels(websocketpp::log::alevel::none);
-      wsServer_.init_asio();
+      pwsServer_.reset(new terminalServer());
 
-      wsServer_.set_message_handler(
-               boost::bind(&ConsoleProcessSocket::onMessage, this, &wsServer_, _1, _2));
-      wsServer_.set_http_handler(
-               boost::bind(&ConsoleProcessSocket::onHttp, this, &wsServer_, _1));
-      wsServer_.set_close_handler(
-               boost::bind(&ConsoleProcessSocket::onClose, this, &wsServer_, _1));
-      wsServer_.set_open_handler(
-               boost::bind(&ConsoleProcessSocket::onOpen, this, &wsServer_, _1));
+      pwsServer_->set_access_channels(websocketpp::log::alevel::none);
+      pwsServer_->init_asio();
+
+      pwsServer_->set_message_handler(
+               boost::bind(&ConsoleProcessSocket::onMessage, this, &*pwsServer_, _1, _2));
+      pwsServer_->set_http_handler(
+               boost::bind(&ConsoleProcessSocket::onHttp, this, &*pwsServer_, _1));
+      pwsServer_->set_close_handler(
+               boost::bind(&ConsoleProcessSocket::onClose, this, &*pwsServer_, _1));
+      pwsServer_->set_open_handler(
+               boost::bind(&ConsoleProcessSocket::onOpen, this, &*pwsServer_, _1));
 
       // try to bind to the given port
       do
@@ -110,16 +97,17 @@ Error ConsoleProcessSocket::ensureServerRunning(
             {
                // listen will fail without ipv6 support on the machine so we
                // only use it for machines with a ipv6 stack
-               // TODO (gary) need a cross-platform way to do this
-               wsServer_.listen(port);
+               // TODO (gary) need a cross-platform way to do this? does it
+               // matter on Mac/Windows clients?
+               pwsServer_->listen(port);
             }
             else
             {
                // no ipv6 support, fall back to ipv4
-               wsServer_.listen(boost::asio::ip::tcp::v4(), port);
+               pwsServer_->listen(boost::asio::ip::tcp::v4(), port);
             }
 
-            wsServer_.start_accept();
+            pwsServer_->start_accept();
             break;
          }
          catch (websocketpp::exception const& e)
@@ -145,9 +133,6 @@ Error ConsoleProcessSocket::ensureServerRunning(
                             "Couldn't find an available port",
                             ERROR_LOCATION);
       }
-
-      // TODO (gary) Should we have a shutdown timer if there are no
-      // connections after a certain period of time?
 
       // start server
       core::thread::safeLaunchThread(
@@ -178,10 +163,12 @@ void ConsoleProcessSocket::stopServer()
    {
       if (serverRunning_)
       {
-         stopAllConnections();
-         wsServer_.stop();
+         releaseAllConnections();
+
+         pwsServer_->stop();
          serverRunning_ = false;
          port_ = 0;
+         pwsServer_.reset();
          websocketThread_.join();
       }
    }
@@ -241,14 +228,14 @@ Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
    // make sure this handle still refers to a connection before we try to
    // send data over it
    websocketpp::lib::error_code ec;
-   wsServer_.get_con_from_hdl(details.hdl_, ec);
+   pwsServer_->get_con_from_hdl(details.hdl_, ec);
    if (ec.value() > 0)
    {
       return systemError(boost::system::errc::not_connected,
                          ec.message(), ERROR_LOCATION);
    }
 
-   wsServer_.send(details.hdl_, message, websocketpp::frame::opcode::text, ec);
+   pwsServer_->send(details.hdl_, message, websocketpp::frame::opcode::text, ec);
    if (ec)
    {
       return systemError(boost::system::errc::bad_message,
@@ -257,7 +244,7 @@ Error ConsoleProcessSocket::sendText(const std::string& terminalHandle,
    return Success();
 }
 
-void ConsoleProcessSocket::stopAllConnections()
+void ConsoleProcessSocket::releaseAllConnections()
 {
    connections_.clear();
 }
@@ -269,7 +256,7 @@ int ConsoleProcessSocket::port() const
 
 void ConsoleProcessSocket::watchSocket()
 {
-   wsServer_.run();
+   pwsServer_->run();
 }
 
 void ConsoleProcessSocket::onMessage(terminalServer* s,
@@ -292,7 +279,7 @@ void ConsoleProcessSocket::onClose(terminalServer* s, websocketpp::connection_hd
    if (handle.empty())
       return;
 
-   s_activeConnections--;
+   activeConnections_--;
 
    ConsoleProcessSocketConnectionDetails details = connections_.get(handle);
 
@@ -306,7 +293,7 @@ void ConsoleProcessSocket::onOpen(terminalServer* s, websocketpp::connection_hdl
    if (handle.empty())
       return;
 
-   s_activeConnections++;
+   activeConnections_++;
 
    // add/update in connections map
    ConsoleProcessSocketConnectionDetails details = connections_.get(handle);

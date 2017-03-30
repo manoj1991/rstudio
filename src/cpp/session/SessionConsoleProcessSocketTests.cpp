@@ -41,24 +41,12 @@ const std::string kCloseMessage = "CLOSE_CONNECTION";
 class SocketHarness : public boost::enable_shared_from_this<SocketHarness>
 {
 public:
-   ConsoleProcessSocketCallbacks createSocketCallbacks()
-   {
-      using boost::bind;
-      ConsoleProcessSocketCallbacks cb;
-      cb.onSocketClosed = bind(&SocketHarness::onSocketClosed,
-                         SocketHarness::shared_from_this());
-      return cb;
-   }
-
    SocketHarness() {}
-
-   ~SocketHarness()
-   {
-   }
+   ~SocketHarness() {}
 
    bool ensureServerRunning()
    {
-      core::Error err = socket_.ensureServerRunning(createSocketCallbacks());
+      core::Error err = socket_.ensureServerRunning();
       return (!err);
    }
 

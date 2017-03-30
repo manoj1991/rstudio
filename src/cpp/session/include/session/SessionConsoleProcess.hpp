@@ -108,7 +108,8 @@ public:
 
    static boost::shared_ptr<ConsoleProcess> createTerminalProcess(
          core::system::ProcessOptions options,
-         boost::shared_ptr<ConsoleProcessInfo> procInfo);
+         boost::shared_ptr<ConsoleProcessInfo> procInfo,
+         bool enableWebsockets = true);
    
    virtual ~ConsoleProcess() {}
 
