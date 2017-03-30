@@ -43,7 +43,7 @@ ConsoleProcessSocket s_terminalSocket;
 // called when the terminal websocket closes
 void onSocketClosed()
 {
-   // TODO (gary) Anything to do here?
+   LOG_INFO_MESSAGE("Terminal websocket closed");
 }
 
 ConsoleProcessSocketCallbacks createSocketCallbacks()
@@ -59,8 +59,7 @@ void saveConsoleProcesses();
 
 ConsoleProcess::ConsoleProcess(boost::shared_ptr<ConsoleProcessInfo> procInfo)
    : procInfo_(procInfo), interrupt_(false), newCols_(-1), newRows_(-1),
-     childProcsSent_(false), lastInputSequence_(kIgnoreSequence), started_(false),
-     pOps_(NULL)
+     childProcsSent_(false), lastInputSequence_(kIgnoreSequence), started_(false)
 {
    regexInit();
 
@@ -74,7 +73,7 @@ ConsoleProcess::ConsoleProcess(const std::string& command,
                                boost::shared_ptr<ConsoleProcessInfo> procInfo)
    : command_(command), options_(options), procInfo_(procInfo),
      interrupt_(false), newCols_(-1), newRows_(-1), childProcsSent_(false),
-     lastInputSequence_(kIgnoreSequence), started_(false), pOps_(NULL)
+     lastInputSequence_(kIgnoreSequence), started_(false)
 {
    commonInit();
 }
@@ -85,7 +84,7 @@ ConsoleProcess::ConsoleProcess(const std::string& program,
                                boost::shared_ptr<ConsoleProcessInfo> procInfo)
    : program_(program), args_(args), options_(options), procInfo_(procInfo),
      interrupt_(false), newCols_(-1), newRows_(-1), childProcsSent_(false),
-     lastInputSequence_(kIgnoreSequence), started_(false), pOps_(NULL)
+     lastInputSequence_(kIgnoreSequence), started_(false)
 {
    commonInit();
 }
@@ -330,7 +329,7 @@ bool ConsoleProcess::onContinue(core::system::ProcessOperations& ops)
    {
       LOCK_MUTEX(mutex_)
       {
-         pOps_ = &ops;
+         pOps_ = ops.weak_from_this();
       }
       END_LOCK_MUTEX
    }
@@ -902,9 +901,10 @@ void ConsoleProcess::onReceivedInput(const std::string& input)
    LOCK_MUTEX(mutex_)
    {
       enqueInput(Input(input));
-      if (pOps_)
+      boost::shared_ptr<core::system::ProcessOperations> ops = pOps_.lock();
+      if (ops)
       {
-         processQueuedInput(*pOps_);
+         processQueuedInput(*ops);
       }
    }
    END_LOCK_MUTEX
